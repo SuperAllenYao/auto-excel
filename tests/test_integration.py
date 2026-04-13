@@ -82,3 +82,17 @@ def test_full_pipeline(tmp_dirs, monkeypatch, make_sample_workbook):
     # Low group (rows 6-7): top-left has value, row 7 None (merged)
     assert ws.cell(6, zb_col).value == "2/33%",  f"Low group 占比 wrong: {ws.cell(6, zb_col).value}"
     assert ws.cell(7, zb_col).value is None,     "Row 7 should be merged (None)"
+
+    # Verify each group's 实际成本 values are in the correct threshold range
+    cost_col = headers.index("实际成本") + 1
+    # High group (rows 2-4): all must be >= 90
+    for r in range(2, 5):
+        c = ws.cell(r, cost_col).value
+        assert c is not None and float(c) >= 90, f"Row {r} in High group has cost {c} < 90"
+    # Medium group (row 5): must be in [50, 90)
+    c5 = ws.cell(5, cost_col).value
+    assert c5 is not None and 50 <= float(c5) < 90, f"Row 5 in Medium group has cost {c5} outside [50,90)"
+    # Low group (rows 6-7): all must be < 50
+    for r in range(6, 8):
+        c = ws.cell(r, cost_col).value
+        assert c is not None and float(c) < 50, f"Row {r} in Low group has cost {c} >= 50"
