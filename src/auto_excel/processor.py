@@ -77,3 +77,30 @@ def apply_calculated_columns(ws: Worksheet) -> None:
             if (ws.cell(row, _lzrs).value or 0) != 0 else 0
         )
     )
+
+
+def sort_by_column(ws: Worksheet, col_name: str, descending: bool = True) -> None:
+    """Sort data rows (row 2 to max_row) by the named column.
+
+    Row 1 (header) is never moved. Entire rows move together.
+    """
+    sort_col = find_column(ws, col_name)
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    # Read all data rows into memory
+    data_rows = []
+    for row in range(2, max_row + 1):
+        row_values = [ws.cell(row, col).value for col in range(1, max_col + 1)]
+        data_rows.append(row_values)
+
+    # Sort by the target column; treat None as 0 for comparison
+    data_rows.sort(
+        key=lambda r: (r[sort_col - 1] is None, r[sort_col - 1] or 0),
+        reverse=descending,
+    )
+
+    # Write sorted rows back
+    for row_idx, row_values in enumerate(data_rows, start=2):
+        for col_idx, value in enumerate(row_values, start=1):
+            ws.cell(row_idx, col_idx).value = value
