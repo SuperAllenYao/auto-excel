@@ -1,5 +1,6 @@
 """CLI entry point."""
 import logging
+import re
 import shutil
 import time
 from datetime import date
@@ -70,6 +71,13 @@ def on():
             results.append({"filename": src.name, "status": "error", "duration": 0})
     display.print_report(results)
     display.print_exit()
+
+
+def _parse_version_from_file(path: Path) -> str:
+    """从 Python 文件中提取 __version__ 值。"""
+    text = path.read_text()
+    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+    return match.group(1) if match else "unknown"
 
 
 def _remove_install_files(install_dir: Path, wrapper: Path) -> list[str]:

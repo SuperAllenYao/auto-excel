@@ -395,3 +395,49 @@ def test_adversarial_info_first_line_matches_version_cmd():
     r_info = runner.invoke(app, ["info"])
     info_first_line = r_info.output.strip().split("\n")[0]
     assert info_first_line == r_ver.output.strip()
+
+
+# ──────────────────────────────────────────────
+# _parse_version_from_file helper tests
+# ──────────────────────────────────────────────
+
+def test_parse_version_double_quotes(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text('__version__ = "2.0.0"\n')
+    assert _parse_version_from_file(f) == "2.0.0"
+
+
+def test_parse_version_single_quotes(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text("__version__ = '3.1.4'\n")
+    assert _parse_version_from_file(f) == "3.1.4"
+
+
+def test_parse_version_missing(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text("# no version here\n")
+    assert _parse_version_from_file(f) == "unknown"
+
+
+def test_adversarial_parse_version_extra_whitespace(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text('__version__  =  "1.0.0"\n')
+    assert _parse_version_from_file(f) == "1.0.0"
+
+
+def test_adversarial_parse_version_with_surrounding_code(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text('"""docstring"""\n\n__version__ = "4.5.6"\n\nother = 1\n')
+    assert _parse_version_from_file(f) == "4.5.6"
+
+
+def test_adversarial_parse_version_empty_file(tmp_path):
+    from auto_excel.cli import _parse_version_from_file
+    f = tmp_path / "__init__.py"
+    f.write_text("")
+    assert _parse_version_from_file(f) == "unknown"
