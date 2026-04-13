@@ -586,3 +586,27 @@ def test_adversarial_upgrade_shows_old_and_new_version(tmp_path, monkeypatch):
     result = runner.invoke(app, ["upgrade"])
     assert __version__ in result.output
     assert "9.9.9" in result.output
+
+
+def test_adversarial_upgrade_pull_before_sync_order(tmp_path, monkeypatch):
+    """git pull must be called BEFORE uv sync."""
+    import auto_excel.config as cfg
+    import subprocess
+    call_log = []
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    init_dir = tmp_path / "src" / "auto_excel"
+    init_dir.mkdir(parents=True)
+    (init_dir / "__init__.py").write_text('__version__ = "2.0.0"\n')
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args and "origin/master" in args:
+            return subprocess.CompletedProcess(args, 0, "new\n", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "old\n", "")
+        call_log.append("pull" if "pull" in args else "uv")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    runner.invoke(app, ["upgrade"])
+    assert call_log == ["pull", "uv"], f"Expected pull before uv, got: {call_log}"
