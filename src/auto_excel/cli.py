@@ -51,6 +51,7 @@ def on():
             display.print_file_done(dur)
             results.append({"filename": src.name, "status": "success", "duration": dur})
         except Exception as exc:
+            logging.exception("处理 %s 时出错", src.name)
             display.print_file_error(src.name, exc)
             results.append({"filename": src.name, "status": "error", "duration": 0})
     display.print_report(results)
