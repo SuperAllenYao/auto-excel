@@ -36,7 +36,7 @@ if ! command -v uv >/dev/null 2>&1; then
     info "uv not found — installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
     # Make uv available in the current shell session
-    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+    export PATH="$HOME/.local/bin:$PATH"
     if ! command -v uv >/dev/null 2>&1; then
         error "uv installation failed or not found in PATH. Please install uv manually and re-run."
         exit 1
@@ -50,7 +50,7 @@ fi
 # Step 3: Install Python dependencies
 # ---------------------------------------------------------------------------
 info "Running uv sync in $INSTALL_DIR..."
-cd "$INSTALL_DIR" && uv sync
+(cd "$INSTALL_DIR" && uv sync)
 success "Dependencies synced."
 
 # ---------------------------------------------------------------------------
