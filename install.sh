@@ -68,7 +68,7 @@ success "Wrapper script created."
 # ---------------------------------------------------------------------------
 # Step 5: Ensure ~/.local/bin is in PATH
 # ---------------------------------------------------------------------------
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+if ! grep -qF '$HOME/.local/bin' "$HOME/.zshrc" 2>/dev/null; then
     info "$BIN_DIR is not in PATH — appending to ~/.zshrc..."
     echo '' >> "$HOME/.zshrc"
     echo '# Added by auto-excel installer' >> "$HOME/.zshrc"
