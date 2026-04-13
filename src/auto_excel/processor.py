@@ -104,3 +104,60 @@ def sort_by_column(ws: Worksheet, col_name: str, descending: bool = True) -> Non
     for row_idx, row_values in enumerate(data_rows, start=2):
         for col_idx, value in enumerate(row_values, start=1):
             ws.cell(row_idx, col_idx).value = value
+
+
+def group_and_merge(ws: Worksheet) -> None:
+    """Insert 占比 column, group rows by 实际成本 ranges, merge and fill."""
+    # Insert 占比 column after 互动成本
+    hd_col = find_column(ws, "互动成本")
+    zb_col = hd_col + 1
+    ws.insert_cols(zb_col)
+    ws.cell(1, zb_col).value = "占比"
+
+    # Read 实际成本 values (column may have shifted after insert — re-scan)
+    sjcb_col = find_column(ws, "实际成本")
+    max_row = ws.max_row
+    total_rows = max_row - 1  # row 1 is header
+
+    if total_rows == 0:
+        return
+
+    # Partition into contiguous groups (data is pre-sorted descending)
+    # Groups: high (≥90), medium (50-89), low (<50)
+    groups = []
+    current_range = None
+    current_start = None
+
+    for row in range(2, max_row + 1):
+        val = ws.cell(row, sjcb_col).value or 0
+        if val >= 90:
+            rng = "high"
+        elif val >= 50:
+            rng = "medium"
+        else:
+            rng = "low"
+
+        if rng != current_range:
+            if current_range is not None:
+                groups.append((current_range, current_start, row - 1))
+            current_range = rng
+            current_start = row
+
+    if current_range is not None:
+        groups.append((current_range, current_start, max_row))
+
+    # Merge and fill each group
+    for _rng, start_row, end_row in groups:
+        count = end_row - start_row + 1
+        pct = round(count / total_rows * 100)
+        text = f"{count}/{pct}%"
+
+        if start_row == end_row:
+            # Single row — just write, no merge needed
+            ws.cell(start_row, zb_col).value = text
+        else:
+            ws.merge_cells(
+                start_row=start_row, start_column=zb_col,
+                end_row=end_row, end_column=zb_col
+            )
+            ws.cell(start_row, zb_col).value = text
