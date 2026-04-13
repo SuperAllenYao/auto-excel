@@ -1,5 +1,18 @@
 # 更新日志
 
+## [v1.2.0] - 2026-04-14
+
+### ✨ 新增
+
+- **info 命令**：`auto-excel info` 显示版本号、安装路径、Python 版本、数据目录等环境信息
+- **upgrade 命令**：`auto-excel upgrade` 自动从 GitHub 检测并升级到最新版本，支持"已是最新"检测和升级前后版本对比
+
+### 🔄 变更
+
+- **安装路径常量化**：将 `INSTALL_DIR` 和 `WRAPPER` 提取到 `config.py`，`uninstall`/`upgrade`/`info` 三个命令共享
+
+---
+
 ## [v1.1.1] - 2026-04-13
 
 ### 🐛 修复
