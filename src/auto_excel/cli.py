@@ -30,6 +30,17 @@ def version():
 
 
 @app.command()
+def info():
+    """显示 auto-excel 环境信息。"""
+    import sys
+    from auto_excel import __version__
+    typer.echo(f"auto-excel {__version__}")
+    typer.echo(f"安装路径: {config.INSTALL_DIR}")
+    typer.echo(f"Python:   {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    typer.echo(f"数据目录: {config.BASE_DIR}")
+
+
+@app.command()
 def on():
     """Process all unprocessed Excel files in Raw/."""
     _setup_logging()

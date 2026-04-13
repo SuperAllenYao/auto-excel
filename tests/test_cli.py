@@ -352,3 +352,46 @@ def test_adversarial_wrapper_under_local_bin():
     from auto_excel.config import WRAPPER
     assert WRAPPER.parent.name == "bin"
     assert WRAPPER.parent.parent.name == ".local"
+
+
+# ──────────────────────────────────────────────
+# info command tests
+# ──────────────────────────────────────────────
+
+def test_info_shows_version():
+    from auto_excel import __version__
+    result = runner.invoke(app, ["info"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+
+def test_info_shows_install_path():
+    result = runner.invoke(app, ["info"])
+    assert "安装路径" in result.output
+    assert ".auto-excel" in result.output
+
+def test_info_shows_python_version():
+    import sys
+    expected = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    result = runner.invoke(app, ["info"])
+    assert expected in result.output
+
+def test_info_shows_data_dir():
+    result = runner.invoke(app, ["info"])
+    assert "数据目录" in result.output
+    assert "marketing analysis" in result.output
+
+
+def test_adversarial_info_exit_code_zero():
+    result = runner.invoke(app, ["info"])
+    assert result.exit_code == 0
+
+def test_adversarial_info_has_four_lines():
+    result = runner.invoke(app, ["info"])
+    lines = [l for l in result.output.strip().split("\n") if l.strip()]
+    assert len(lines) == 4
+
+def test_adversarial_info_first_line_matches_version_cmd():
+    r_ver = runner.invoke(app, ["version"])
+    r_info = runner.invoke(app, ["info"])
+    info_first_line = r_info.output.strip().split("\n")[0]
+    assert info_first_line == r_ver.output.strip()
