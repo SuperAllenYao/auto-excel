@@ -1,7 +1,9 @@
 """CLI entry point."""
 import logging
+import shutil
 import time
 from datetime import date
+from pathlib import Path
 
 import typer
 
@@ -23,7 +25,8 @@ def _setup_logging():
 @app.command()
 def version():
     """Show version information."""
-    typer.echo("auto-excel 0.1.0")
+    from auto_excel import __version__
+    typer.echo(f"auto-excel {__version__}")
 
 
 @app.command()
@@ -56,3 +59,40 @@ def on():
             results.append({"filename": src.name, "status": "error", "duration": 0})
     display.print_report(results)
     display.print_exit()
+
+
+def _remove_install_files(install_dir: Path, wrapper: Path) -> list[str]:
+    """删除安装目录和 wrapper 脚本，返回实际删除的路径列表。"""
+    removed = []
+    if wrapper.exists():
+        wrapper.unlink()
+        removed.append(str(wrapper))
+    if install_dir.exists():
+        shutil.rmtree(install_dir)
+        removed.append(str(install_dir))
+    return removed
+
+
+@app.command()
+def uninstall():
+    """完全卸载 auto-excel（保留已处理的文档）。"""
+    install_dir = Path.home() / ".auto-excel"
+    wrapper = Path.home() / ".local" / "bin" / "auto-excel"
+
+    typer.echo("以下文件将被删除：")
+    typer.echo(f"  {install_dir}")
+    typer.echo(f"  {wrapper}")
+    typer.echo("以下内容不会被删除：")
+    typer.echo(f"  ~/Desktop/marketing analysis/（已处理文档完整保留）")
+    typer.echo("")
+
+    typer.confirm("确认卸载？", abort=True)
+
+    removed = _remove_install_files(install_dir, wrapper)
+
+    if removed:
+        for path in removed:
+            typer.echo(f"已删除：{path}")
+    else:
+        typer.echo("未找到需要删除的文件，可能已经卸载。")
+    typer.echo("auto-excel 已卸载。")

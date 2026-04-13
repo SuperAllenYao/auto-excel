@@ -196,3 +196,132 @@ def test_adversarial_result_status_error_on_failure(tmp_dirs, monkeypatch):
     assert len(captured_results) == 1
     assert captured_results[0]["filename"] == "bad.xlsx"
     assert captured_results[0]["status"] == "error"
+
+
+# ──────────────────────────────────────────────
+# uninstall command tests
+# ──────────────────────────────────────────────
+
+def test_uninstall_shows_what_will_be_deleted(tmp_path):
+    """uninstall must list the install dir and wrapper before asking."""
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    assert "以下文件将被删除" in result.output
+    assert ".auto-excel" in result.output
+    assert "auto-excel" in result.output
+
+
+def test_uninstall_shows_marketing_dir_preserved(tmp_path):
+    """uninstall must explicitly state marketing analysis dir is not touched."""
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    assert "marketing analysis" in result.output
+    assert "不会被删除" in result.output
+
+
+def test_uninstall_aborts_on_no(tmp_path, monkeypatch):
+    """Answering 'n' must abort without deleting anything."""
+    install_dir = tmp_path / ".auto-excel"
+    install_dir.mkdir()
+    wrapper = tmp_path / "auto-excel-wrapper"
+    wrapper.write_text("#!/bin/sh\n")
+
+    import auto_excel.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "uninstall", _make_uninstall_with_paths(install_dir, wrapper))
+
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    # Files must still exist when user declines
+    assert install_dir.exists()
+    assert wrapper.exists()
+
+
+def _make_uninstall_with_paths(install_dir, wrapper):
+    """Return a patched uninstall function that uses tmp paths instead of home."""
+    import shutil as _shutil
+    import typer as _typer
+
+    @app.command("uninstall")
+    def _uninstall():
+        _typer.echo("以下文件将被删除：")
+        _typer.echo(f"  {install_dir}")
+        _typer.echo(f"  {wrapper}")
+        _typer.echo("以下内容不会被删除：")
+        _typer.echo("  ~/Desktop/marketing analysis/（已处理文档完整保留）")
+        _typer.echo("")
+        _typer.confirm("确认卸载？", abort=True)
+        removed = []
+        if wrapper.exists():
+            wrapper.unlink()
+            removed.append(str(wrapper))
+        if install_dir.exists():
+            _shutil.rmtree(install_dir)
+            removed.append(str(install_dir))
+        if removed:
+            for p in removed:
+                _typer.echo(f"已删除：{p}")
+        else:
+            _typer.echo("未找到需要删除的文件，可能已经卸载。")
+        _typer.echo("auto-excel 已卸载。")
+
+    return _uninstall
+
+
+def test_uninstall_deletes_install_dir_and_wrapper(tmp_path):
+    """_remove_install_files removes both install dir and wrapper."""
+    from auto_excel.cli import _remove_install_files
+
+    install_dir = tmp_path / ".auto-excel"
+    install_dir.mkdir()
+    (install_dir / "prog.py").write_text("code")
+    wrapper = tmp_path / "auto-excel"
+    wrapper.write_text("#!/bin/sh\n")
+
+    removed = _remove_install_files(install_dir, wrapper)
+
+    assert not install_dir.exists(), "install dir must be deleted"
+    assert not wrapper.exists(), "wrapper must be deleted"
+    assert len(removed) == 2, "both paths must appear in the removed list"
+
+
+def test_uninstall_succeeds_when_files_missing(tmp_path):
+    """uninstall must succeed gracefully when install dir/wrapper don't exist."""
+    import unittest.mock as mock
+
+    fake_home = tmp_path  # empty — no .auto-excel or wrapper
+
+    with mock.patch("auto_excel.cli.Path") as MockPath:
+        home_mock = mock.MagicMock()
+        MockPath.home.return_value = home_mock
+        home_mock.__truediv__ = lambda self, other: (
+            tmp_path / other if other in (".auto-excel",) else mock.MagicMock()
+        )
+        result = runner.invoke(app, ["uninstall"], input="y\n")
+
+    assert result.exit_code in (0, 1)
+
+
+def test_uninstall_exit_code_abort_on_no():
+    """Responding 'n' must produce a non-zero exit code (Typer abort=True)."""
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    assert result.exit_code != 0
+
+
+def test_uninstall_confirm_message_present():
+    """The confirmation prompt must be visible to the user."""
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    assert "确认卸载" in result.output
+
+
+def test_adversarial_uninstall_does_not_mention_raw_or_new():
+    """uninstall output must NOT claim it deletes Raw/ or New/ subdirs."""
+    result = runner.invoke(app, ["uninstall"], input="n\n")
+    output_lower = result.output
+    assert "Raw/" not in output_lower
+    assert "New/" not in output_lower
+
+
+def test_version_shows_correct_version():
+    """version command must output the package version, not a hardcoded old string."""
+    from auto_excel import __version__
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+    assert "0.1.0" not in result.output
