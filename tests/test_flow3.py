@@ -69,3 +69,37 @@ def test_adversarial_single_row(make_sample_workbook):
     _apply_all(ws)
     zb_col = find_column(ws, "占比")
     assert ws.cell(2, zb_col).value == "1/100%"
+
+def test_adversarial_zhanbi_column_position(make_sample_workbook):
+    """占比列必须紧跟互动成本列之后，不能插在末尾或其他位置。"""
+    wb = make_sample_workbook(ROWS_5)
+    ws = wb.worksheets[3]
+    apply_calculated_columns(ws)
+    sort_by_column(ws, "实际成本", descending=True)
+    hd_col_before_merge = find_column(ws, "互动成本")
+    group_and_merge(ws)
+    hd_col_after = find_column(ws, "互动成本")
+    zb_col = find_column(ws, "占比")
+    assert zb_col == hd_col_after + 1
+
+def test_adversarial_boundary_values_90_and_50():
+    """实际成本 = 90 必须归入 high（≥90），= 50 必须归入 medium（≥50）。"""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    # Minimal sheet with just 互动成本 and 实际成本 columns
+    ws.cell(1, 1).value = "互动成本"
+    ws.cell(1, 2).value = "实际成本"
+    ws.cell(2, 1).value = 10;  ws.cell(2, 2).value = 90   # boundary: exactly 90 → high
+    ws.cell(3, 1).value = 10;  ws.cell(3, 2).value = 50   # boundary: exactly 50 → medium
+    ws.cell(4, 1).value = 10;  ws.cell(4, 2).value = 20   # low
+
+    group_and_merge(ws)
+    zb_col = find_column(ws, "占比")
+
+    # 90 → high (1 row, 33% of 3)
+    assert ws.cell(2, zb_col).value == "1/33%", f"实际成本=90 应属于 high 组，got {ws.cell(2, zb_col).value}"
+    # 50 → medium (1 row, 33% of 3)
+    assert ws.cell(3, zb_col).value == "1/33%", f"实际成本=50 应属于 medium 组，got {ws.cell(3, zb_col).value}"
+    # 20 → low (1 row, 33% of 3)
+    assert ws.cell(4, zb_col).value == "1/33%"
