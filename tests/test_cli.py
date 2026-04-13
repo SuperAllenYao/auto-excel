@@ -493,3 +493,96 @@ def test_adversarial_upgrade_fetch_network_error(tmp_path, monkeypatch):
     result = runner.invoke(app, ["upgrade"])
     assert result.exit_code == 1
     assert "网络" in result.output or "远程仓库" in result.output
+
+
+def test_upgrade_success(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    import subprocess
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    init_dir = tmp_path / "src" / "auto_excel"
+    init_dir.mkdir(parents=True)
+    (init_dir / "__init__.py").write_text('__version__ = "2.0.0"\n')
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args and "origin/master" in args:
+            return subprocess.CompletedProcess(args, 0, "def456\n", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "abc123\n", "")
+        if "pull" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args and args[0] == "uv":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 0
+    assert "升级成功" in result.output
+    assert "2.0.0" in result.output
+
+
+def test_adversarial_upgrade_pull_fails(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    import subprocess
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args and "origin/master" in args:
+            return subprocess.CompletedProcess(args, 0, "def456\n", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "abc123\n", "")
+        if "pull" in args:
+            return subprocess.CompletedProcess(args, 1, "", "merge conflict")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 1
+    assert "拉取更新失败" in result.output
+
+def test_adversarial_upgrade_uv_sync_fails(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    import subprocess
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args and "origin/master" in args:
+            return subprocess.CompletedProcess(args, 0, "def456\n", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "abc123\n", "")
+        if "pull" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args and args[0] == "uv":
+            return subprocess.CompletedProcess(args, 1, "", "error: no such option")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 1
+    assert "依赖同步失败" in result.output
+
+def test_adversarial_upgrade_shows_old_and_new_version(tmp_path, monkeypatch):
+    """Upgrade output must contain both old and new version strings."""
+    import auto_excel.config as cfg
+    import subprocess
+    from auto_excel import __version__
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    init_dir = tmp_path / "src" / "auto_excel"
+    init_dir.mkdir(parents=True)
+    (init_dir / "__init__.py").write_text('__version__ = "9.9.9"\n')
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args and "origin/master" in args:
+            return subprocess.CompletedProcess(args, 0, "new\n", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "old\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert __version__ in result.output
+    assert "9.9.9" in result.output

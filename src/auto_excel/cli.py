@@ -71,8 +71,26 @@ def upgrade():
     if local.stdout.strip() == remote.stdout.strip():
         typer.echo(f"已是最新版本 v{__version__}，无需升级")
         return
-    # Pull + sync will be completed in Task 6
     typer.echo("检测到新版本，正在升级...")
+    result = subprocess.run(
+        ["git", "-C", str(install_dir), "pull", "origin", "master"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        typer.echo("错误：拉取更新失败")
+        typer.echo(result.stderr.strip())
+        raise typer.Exit(1)
+    result = subprocess.run(
+        ["uv", "sync"], capture_output=True, text=True, cwd=str(install_dir),
+    )
+    if result.returncode != 0:
+        typer.echo("错误：依赖同步失败")
+        typer.echo(result.stderr.strip())
+        raise typer.Exit(1)
+    new_version = _parse_version_from_file(
+        install_dir / "src" / "auto_excel" / "__init__.py"
+    )
+    typer.echo(f"升级成功: v{__version__} → v{new_version}")
 
 
 @app.command()
