@@ -32,7 +32,7 @@ def insert_calculated_column(
         val = ws.cell(row, source_idx).value or 0
         try:
             result = formula_fn(float(val), row)
-        except ZeroDivisionError:
+        except (ZeroDivisionError, TypeError):
             result = 0
         ws.cell(row, insert_at).value = result
 
