@@ -68,6 +68,9 @@ def upgrade():
         ["git", "-C", str(install_dir), "rev-parse", "origin/master"],
         capture_output=True, text=True,
     )
+    if local.returncode != 0 or remote.returncode != 0:
+        typer.echo("错误：版本检测失败")
+        raise typer.Exit(1)
     if local.stdout.strip() == remote.stdout.strip():
         typer.echo(f"已是最新版本 v{__version__}，无需升级")
         return
@@ -127,7 +130,10 @@ def on():
 
 def _parse_version_from_file(path: Path) -> str:
     """从 Python 文件中提取 __version__ 值。"""
-    text = path.read_text()
+    try:
+        text = path.read_text()
+    except OSError:
+        return "unknown"
     match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
     return match.group(1) if match else "unknown"
 
