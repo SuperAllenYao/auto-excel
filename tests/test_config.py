@@ -35,9 +35,10 @@ def test_adversarial_dir_names_are_correct():
     assert config.STATE_FILE.name == "processed.json"
 
 
-def test_adversarial_state_file_name():
-    """Verify that STATE_FILE has the correct complete filename."""
-    assert config.STATE_FILE.name == "processed.json"
+def test_adversarial_state_file_parent_chain():
+    """STATE_FILE must be exactly LOG_DIR / 'processed.json', not nested deeper."""
+    assert config.STATE_FILE.parent == config.LOG_DIR
+    assert config.STATE_FILE.parent.parent == config.BASE_DIR
 
 
 def test_adversarial_constants_are_path_instances():
@@ -46,3 +47,9 @@ def test_adversarial_constants_are_path_instances():
 
     for p in [config.BASE_DIR, config.RAW_DIR, config.NEW_DIR, config.LOG_DIR, config.STATE_FILE]:
         assert isinstance(p, Path)
+
+
+def test_adversarial_base_dir_parent_is_home_desktop():
+    """BASE_DIR must be a direct child of ~/Desktop, not just contain 'Desktop' somewhere."""
+    from pathlib import Path
+    assert config.BASE_DIR.parent == Path.home() / "Desktop"
