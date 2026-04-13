@@ -2,6 +2,7 @@
 import logging
 import re
 import shutil
+import subprocess
 import time
 from datetime import date
 from pathlib import Path
@@ -39,6 +40,39 @@ def info():
     typer.echo(f"安装路径: {config.INSTALL_DIR}")
     typer.echo(f"Python:   {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
     typer.echo(f"数据目录: {config.BASE_DIR}")
+
+
+@app.command()
+def upgrade():
+    """从 GitHub 升级到最新版本。"""
+    from auto_excel import __version__
+    install_dir = config.INSTALL_DIR
+    if not (install_dir / ".git").is_dir():
+        typer.echo("错误：未检测到安装目录，请重新安装：")
+        typer.echo("  curl -sSL https://raw.githubusercontent.com/SuperAllenYao/auto-excel/master/install.sh | bash")
+        raise typer.Exit(1)
+    typer.echo(f"当前版本: v{__version__}")
+    result = subprocess.run(
+        ["git", "-C", str(install_dir), "fetch", "origin", "master"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        typer.echo("错误：无法连接到远程仓库，请检查网络")
+        typer.echo(result.stderr.strip())
+        raise typer.Exit(1)
+    local = subprocess.run(
+        ["git", "-C", str(install_dir), "rev-parse", "HEAD"],
+        capture_output=True, text=True,
+    )
+    remote = subprocess.run(
+        ["git", "-C", str(install_dir), "rev-parse", "origin/master"],
+        capture_output=True, text=True,
+    )
+    if local.stdout.strip() == remote.stdout.strip():
+        typer.echo(f"已是最新版本 v{__version__}，无需升级")
+        return
+    # Pull + sync will be completed in Task 6
+    typer.echo("检测到新版本，正在升级...")
 
 
 @app.command()

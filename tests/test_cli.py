@@ -441,3 +441,55 @@ def test_adversarial_parse_version_empty_file(tmp_path):
     f = tmp_path / "__init__.py"
     f.write_text("")
     assert _parse_version_from_file(f) == "unknown"
+
+
+# ──────────────────────────────────────────────
+# upgrade command tests
+# ──────────────────────────────────────────────
+
+def test_upgrade_no_install_dir(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path / "nonexistent")
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 1
+    assert "未检测到" in result.output
+
+
+def test_upgrade_already_latest(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    import subprocess
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, "abc123\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 0
+    assert "已是最新" in result.output
+
+
+def test_adversarial_upgrade_shows_reinstall_cmd(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path / "gone")
+    result = runner.invoke(app, ["upgrade"])
+    assert "curl" in result.output
+    assert "install.sh" in result.output
+
+
+def test_adversarial_upgrade_fetch_network_error(tmp_path, monkeypatch):
+    import auto_excel.config as cfg
+    import subprocess
+    monkeypatch.setattr(cfg, "INSTALL_DIR", tmp_path)
+    (tmp_path / ".git").mkdir()
+    def mock_run(args, **kwargs):
+        if "fetch" in args:
+            return subprocess.CompletedProcess(args, 1, "", "fatal: unable to access")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    result = runner.invoke(app, ["upgrade"])
+    assert result.exit_code == 1
+    assert "网络" in result.output or "远程仓库" in result.output
