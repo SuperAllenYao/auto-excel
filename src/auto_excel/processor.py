@@ -94,11 +94,11 @@ def sort_by_column(ws: Worksheet, col_name: str, descending: bool = True) -> Non
         row_values = [ws.cell(row, col).value for col in range(1, max_col + 1)]
         data_rows.append(row_values)
 
-    # Sort by the target column; treat None as 0 for comparison
-    data_rows.sort(
-        key=lambda r: (r[sort_col - 1] is None, r[sort_col - 1] or 0),
-        reverse=descending,
-    )
+    # Sort by the target column; None values always go to the end
+    none_rows = [r for r in data_rows if r[sort_col - 1] is None]
+    value_rows = [r for r in data_rows if r[sort_col - 1] is not None]
+    value_rows.sort(key=lambda r: r[sort_col - 1], reverse=descending)
+    data_rows = value_rows + none_rows
 
     # Write sorted rows back
     for row_idx, row_values in enumerate(data_rows, start=2):
