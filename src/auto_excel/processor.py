@@ -35,3 +35,45 @@ def insert_calculated_column(
         except ZeroDivisionError:
             result = 0
         ws.cell(row, insert_at).value = result
+
+
+def apply_calculated_columns(ws: Worksheet) -> None:
+    """Insert 4 calculated columns into Sheet 4 in sequence.
+
+    Re-scans column indices after each insertion to account for shifting.
+    """
+    # Column 1: 实际花费 = 花费 / 1.136
+    insert_calculated_column(ws, "花费", "实际花费", lambda val, row: val / 1.136)
+
+    # Column 2: 点击率 = 点击量 / 展现量
+    # Capture 展现量 index now (after 实际花费 insertion shifted columns right of 花费)
+    zx_col = find_column(ws, "展现量")
+    insert_calculated_column(
+        ws, "点击量", "点击率",
+        lambda val, row, _zx=zx_col: val / (ws.cell(row, _zx).value or 1)
+        if (ws.cell(row, _zx).value or 0) != 0 else 0
+    )
+
+    # Column 3: CPC = 实际花费 / 点击量
+    # Re-scan after 点击率 insertion
+    sjhf_col = find_column(ws, "实际花费")
+    jl_col = find_column(ws, "点击量")
+    insert_calculated_column(
+        ws, "点击率", "CPC",
+        lambda val, row, _jf=sjhf_col, _jl=jl_col: (
+            (ws.cell(row, _jf).value or 0) / (ws.cell(row, _jl).value or 1)
+            if (ws.cell(row, _jl).value or 0) != 0 else 0
+        )
+    )
+
+    # Column 4: 实际成本 = 实际花费 / 留资人数
+    # Re-scan after CPC insertion
+    sjhf_col = find_column(ws, "实际花费")
+    lzrs_col = find_column(ws, "留资人数")
+    insert_calculated_column(
+        ws, "留资成本", "实际成本",
+        lambda val, row, _jf=sjhf_col, _lzrs=lzrs_col: (
+            (ws.cell(row, _jf).value or 0) / (ws.cell(row, _lzrs).value or 1)
+            if (ws.cell(row, _lzrs).value or 0) != 0 else 0
+        )
+    )
