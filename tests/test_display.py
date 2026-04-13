@@ -48,3 +48,28 @@ def test_adversarial_print_no_files():
     console, output = make_test_console()
     print_no_files(console=console)
     assert len(output.getvalue()) > 0  # should output something
+
+
+def test_adversarial_print_report_status_mapping():
+    """Wrong impl that maps all rows to same status must be caught."""
+    results = [
+        {"filename": "ok.xlsx", "status": "success", "duration": 1.0},
+        {"filename": "bad.xlsx", "status": "error", "duration": 0},
+    ]
+    console, output = make_test_console()
+    print_report(results, console=console)
+    text = output.getvalue()
+    assert "✅" in text, "success row must show success symbol"
+    assert "❌" in text, "error row must show failure symbol"
+    assert "1.00" in text, "success row must show numeric duration"
+
+
+def test_adversarial_print_start_varies_with_count():
+    """Two different counts must produce different outputs."""
+    console1, output1 = make_test_console()
+    print_start(1, console=console1)
+    console2, output2 = make_test_console()
+    print_start(99, console=console2)
+    assert "1" in output1.getvalue()
+    assert "99" in output2.getvalue()
+    assert output1.getvalue() != output2.getvalue()
