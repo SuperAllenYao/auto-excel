@@ -1,7 +1,5 @@
 """Tests for the config module."""
 
-from pathlib import Path
-
 from auto_excel import config
 
 

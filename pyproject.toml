@@ -20,3 +20,6 @@ auto-excel = "auto_excel.cli:app"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+[tool.pyright]
+extraPaths = ["src"]
