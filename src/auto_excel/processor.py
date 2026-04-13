@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -34,10 +35,11 @@ def insert_calculated_column(
     for row in range(2, ws.max_row + 1):
         val = ws.cell(row, source_idx).value or 0
         try:
-            result = formula_fn(float(val), row)
-        except (ZeroDivisionError, TypeError):
+            result = formula_fn(float(val), row)  # type: ignore[arg-type]
+        except (ZeroDivisionError, TypeError, ValueError):
+            logging.warning("row %d: cannot compute %s from value %r, using 0", row, new_col_name, val)
             result = 0
-        ws.cell(row, insert_at).value = result
+        ws.cell(row, insert_at).value = result  # type: ignore[assignment]
 
 
 def apply_calculated_columns(ws: Worksheet) -> None:
@@ -169,7 +171,7 @@ def group_and_merge(ws: Worksheet) -> None:
 def process_file(src: Path, dst: Path, on_step=None) -> None:
     if on_step: on_step("正在复制文件...")
     shutil.copy2(src, dst)
-    wb = load_workbook(dst)
+    wb = load_workbook(dst, data_only=True)
     ws = wb.worksheets[3]
     if on_step: on_step("正在计算列...")
     apply_calculated_columns(ws)
