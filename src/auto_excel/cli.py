@@ -76,8 +76,8 @@ def _remove_install_files(install_dir: Path, wrapper: Path) -> list[str]:
 @app.command()
 def uninstall():
     """完全卸载 auto-excel（保留已处理的文档）。"""
-    install_dir = Path.home() / ".auto-excel"
-    wrapper = Path.home() / ".local" / "bin" / "auto-excel"
+    install_dir = config.INSTALL_DIR
+    wrapper = config.WRAPPER
 
     typer.echo("以下文件将被删除：")
     typer.echo(f"  {install_dir}")
