@@ -1,5 +1,18 @@
 # 更新日志
 
+## [v1.1.0] - 2026-04-13
+
+### ✨ 新增
+
+- **uninstall 命令**：`auto-excel uninstall` 一键卸载，删除 `~/.auto-excel/` 和 `~/.local/bin/auto-excel`，执行前显示确认提示，**不删除**已处理文档（`~/Desktop/marketing analysis/` 完整保留）
+
+### 🐛 修复
+
+- **版本号显示**：`auto-excel version` 现在从 `__version__` 读取，不再显示硬编码的旧版本号
+- **安装脚本 URL**：修正 `README.md` 中 `curl` 安装命令的分支名（`main` → `master`）
+
+---
+
 ## [v1.0.0] - 2026-04-13
 
 ### ✨ 新增
