@@ -60,4 +60,4 @@ auto-excel on
 
 ## 版本
 
-v1.1.0 — 新增 uninstall 命令
+v1.1.1 — 修复公式单元格兼容性
