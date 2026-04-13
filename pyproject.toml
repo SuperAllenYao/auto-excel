@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auto-excel"
+version = "0.1.0"
+description = "Marketing Excel automation CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "typer>=0.9.0",
+    "rich>=14.0.0",
+]
+
+[project.scripts]
+auto-excel = "auto_excel.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
