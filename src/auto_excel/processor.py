@@ -1,5 +1,8 @@
 from __future__ import annotations
+import shutil
+from pathlib import Path
 from typing import Callable
+from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -161,3 +164,17 @@ def group_and_merge(ws: Worksheet) -> None:
                 end_row=end_row, end_column=zb_col
             )
             ws.cell(start_row, zb_col).value = text
+
+
+def process_file(src: Path, dst: Path, on_step=None) -> None:
+    if on_step: on_step("正在复制文件...")
+    shutil.copy2(src, dst)
+    wb = load_workbook(dst)
+    ws = wb.worksheets[3]
+    if on_step: on_step("正在计算列...")
+    apply_calculated_columns(ws)
+    if on_step: on_step("正在排序...")
+    sort_by_column(ws, "实际成本")
+    if on_step: on_step("正在生成分组统计...")
+    group_and_merge(ws)
+    wb.save(dst)
