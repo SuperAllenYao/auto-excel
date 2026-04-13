@@ -325,3 +325,30 @@ def test_version_shows_correct_version():
     assert result.exit_code == 0
     assert __version__ in result.output
     assert "0.1.0" not in result.output
+
+
+def test_config_install_dir_is_path():
+    from pathlib import Path
+    from auto_excel.config import INSTALL_DIR
+    assert isinstance(INSTALL_DIR, Path)
+    assert INSTALL_DIR.name == ".auto-excel"
+
+
+def test_config_wrapper_is_path():
+    from pathlib import Path
+    from auto_excel.config import WRAPPER
+    assert isinstance(WRAPPER, Path)
+    assert WRAPPER.name == "auto-excel"
+    assert ".local" in str(WRAPPER)
+
+
+def test_adversarial_install_dir_under_home():
+    from auto_excel.config import INSTALL_DIR
+    from pathlib import Path
+    assert str(INSTALL_DIR).startswith(str(Path.home()))
+
+
+def test_adversarial_wrapper_under_local_bin():
+    from auto_excel.config import WRAPPER
+    assert WRAPPER.parent.name == "bin"
+    assert WRAPPER.parent.parent.name == ".local"
