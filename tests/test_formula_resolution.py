@@ -45,6 +45,7 @@ def test_resolve_sumifs_missing_id(make_formula_workbook):
 
 def test_resolve_sumifs_no_formulas(make_sample_workbook):
     wb = make_sample_workbook([{"花费": 100.0, "展现量": 1000, "点击量": 50, "留资人数": 5}])
+    assert len(wb.worksheets) >= 4  # guard against fixture shape drift
     ws = wb.worksheets[3]
     resolve_formulas(wb, ws)
     assert ws.cell(2, 3).value == 100.0  # Value unchanged

@@ -171,10 +171,13 @@ def group_and_merge(ws: Worksheet) -> None:
             ws.cell(start_row, zb_col).value = text
 
 
-# Matches: =SUMIFS('SheetName'!<sum_col>:<sum_col>,'SheetName'!A:A,<key_col_letter><row>)
-# Groups: (1) sheet_name, (2) sum_col_letter, (3) key_col_letter
+# Matches: =SUMIFS('SheetName'!<sum_col>:<sum_col>,'SheetName'!<src_key_col>:<src_key_col>,<tgt_key_col><row>)
+# Groups: (1) sheet_name, (2) sum_col_letter, (3) src_key_col_letter, (4) tgt_key_col_letter
+# The spec fixes the source sheet layout so src_key_col is always A, but we still
+# capture it so an unexpected layout surfaces as a different sum rather than a
+# silent aggregate from the wrong column.
 SUMIFS_RE = re.compile(
-    r"=SUMIFS\('([^']+)'!([A-Z]+):[A-Z]+,'[^']*'![A-Z]+:[A-Z]+,([A-Z]+)\d+\)"
+    r"=SUMIFS\('([^']+)'!([A-Z]+):[A-Z]+,'[^']+'!([A-Z]+):[A-Z]+,([A-Z]+)\d+\)"
 )
 
 
@@ -189,8 +192,8 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
     returns immediately without modifying anything.
     """
     # --- Phase 1: Scan row 2 to find SUMIFS formula columns ---
-    # sumifs_cols maps: target_col_idx -> (sheet_name, sum_col_idx, key_col_idx)
-    sumifs_cols: dict[int, tuple[str, int, int]] = {}
+    # sumifs_cols maps: target_col_idx -> (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
+    sumifs_cols: dict[int, tuple[str, int, int, int]] = {}
     for col in range(1, ws.max_column + 1):
         cell_val = ws.cell(2, col).value
         if not isinstance(cell_val, str):
@@ -199,16 +202,18 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
         if m:
             sheet_name = m.group(1)
             sum_col_idx = column_index_from_string(m.group(2))
-            key_col_idx = column_index_from_string(m.group(3))
-            sumifs_cols[col] = (sheet_name, sum_col_idx, key_col_idx)
+            src_key_col_idx = column_index_from_string(m.group(3))
+            tgt_key_col_idx = column_index_from_string(m.group(4))
+            sumifs_cols[col] = (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
 
-    # No SUMIFS formulas found — nothing to do
     if not sumifs_cols:
         return
 
-    # All SUMIFS formulas should reference the same source sheet; use the first
-    first_entry = next(iter(sumifs_cols.values()))
-    sheet_name = first_entry[0]
+    # All SUMIFS formulas share the same source sheet and key layout; take the first
+    source_meta = next(iter(sumifs_cols.values()))
+    sheet_name = source_meta[0]
+    src_key_col_idx = source_meta[2]
+    tgt_key_col_idx = source_meta[3]
 
     # --- Phase 2: Load source sheet ---
     if sheet_name not in wb.sheetnames:
@@ -221,15 +226,14 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
     ws_src = wb[sheet_name]
 
     # --- Phase 3: Build aggregation dict: key -> {target_col -> sum} ---
-    # key is col A of source sheet (笔记ID); aggregated is keyed by that.
     aggregated: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
 
     for src_row in range(2, ws_src.max_row + 1):
-        key_val = ws_src.cell(src_row, 1).value  # source key is always col A
+        key_val = ws_src.cell(src_row, src_key_col_idx).value
         if key_val is None:
             continue
         key_str = str(key_val)
-        for tgt_col, (_sn, sum_col_idx, _kci) in sumifs_cols.items():
+        for tgt_col, (_sn, sum_col_idx, _skc, _tkc) in sumifs_cols.items():
             raw = ws_src.cell(src_row, sum_col_idx).value
             try:
                 aggregated[key_str][tgt_col] += float(raw or 0)
@@ -238,9 +242,7 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
 
     # --- Phase 4: Fill target rows ---
     for row in range(2, ws.max_row + 1):
-        # The key column for this row is found from the first SUMIFS entry's key_col_idx
-        key_col_idx = first_entry[2]
-        key_val = ws.cell(row, key_col_idx).value
+        key_val = ws.cell(row, tgt_key_col_idx).value
         key_str = str(key_val) if key_val is not None else ""
 
         row_sums = aggregated.get(key_str, {})
