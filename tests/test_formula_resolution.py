@@ -746,7 +746,7 @@ def test_real_file_simulation(tmp_path):
         f"id_missing 花費 expected 0, got {id_to_huafei['id_missing']}"
     )
 
-    # --- Assertion 5: 实际成本 column sorted descending ---
+    # --- Assertion 5: 实际成本 column sorted descending + id1's exact value ---
     cost_col = out_headers.index("实际成本") + 1
     costs = [
         ws_out.cell(r, cost_col).value
@@ -754,6 +754,17 @@ def test_real_file_simulation(tmp_path):
         if ws_out.cell(r, cost_col).value is not None
     ]
     assert costs == sorted(costs, reverse=True), f"实际成本 not sorted descending: {costs}"
+
+    # Pin id1's exact 实际成本 = (花费=1000 / 1.136) / 留资人数=5 ≈ 176.06
+    # This catches mutations where 实际花费 = 花费 * 2 etc. (direction wrong but sort OK)
+    id1_row = next(
+        r for r in range(2, ws_out.max_row + 1) if ws_out.cell(r, 2).value == "id1"
+    )
+    id1_cost = ws_out.cell(id1_row, cost_col).value
+    expected_id1_cost = 1000 / 1.136 / 5
+    assert abs(id1_cost - expected_id1_cost) < 0.1, (
+        f"id1 实际成本 expected ~{expected_id1_cost:.2f}, got {id1_cost}"
+    )
 
     # --- Assertion 6: 占比 column percentages sum to ~100% ---
     zb_col = out_headers.index("占比") + 1
@@ -763,13 +774,23 @@ def test_real_file_simulation(tmp_path):
         if ws_out.cell(r, zb_col).value is not None
     ]
     total_pct = 0
+    total_rows = 0
     for zb in zb_values:
         # Format is "N/P%" — parse defensively so unexpected formats produce an
         # AssertionError with the actual value, not an unrelated ValueError.
         assert isinstance(zb, str) and "/" in zb and zb.endswith("%"), \
             f"Unexpected 占比 format: {zb!r} — expected 'N/P%'"
-        pct_str = zb.split("/", 1)[1].rstrip("%")
-        total_pct += int(pct_str)
+        n_str, p_str = zb.split("/", 1)
+        row_count = int(n_str)
+        pct = int(p_str.rstrip("%"))
+        # Row count must be > 0 and pct must match the fraction to within 1%
+        # (catches mutations where row_count is frozen or percentage is hardcoded)
+        assert row_count >= 1, f"占比 group has 0 rows: {zb!r}"
+        assert abs(pct - round(row_count / 4 * 100)) <= 1, \
+            f"占比 percentage inconsistent with row count: {zb!r}"
+        total_pct += pct
+        total_rows += row_count
+    assert total_rows == 4, f"占比 rows sum to {total_rows}, expected 4 data rows"
     assert abs(total_pct - 100) <= 2, (
         f"占比 percentages sum to {total_pct}%, expected ~100%"
     )
