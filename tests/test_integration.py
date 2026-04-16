@@ -164,6 +164,56 @@ def test_full_pipeline_with_formulas(tmp_dirs, monkeypatch, make_formula_workboo
     assert costs == sorted(costs, reverse=True), f"实际成本 not sorted desc: {costs}"
 
 
+def test_pipeline_runs_resolve_formulas_before_apply_calculated_columns(
+    tmp_dirs, monkeypatch, make_formula_workbook
+):
+    """Probe the pipeline order: resolve_formulas must run before apply_calculated_columns.
+
+    Construct a row where 笔记ID is empty string. Its formula cells (col C-H) still contain
+    formula STRINGS after load. For the pipeline to succeed:
+      1. resolve_formulas must run first — it replaces formula strings in empty-key rows with 0
+      2. remove_empty_rows keeps the row (col A has a title, not None)
+      3. apply_calculated_columns then sees numeric 0s, not formula strings
+    If resolve_formulas runs AFTER apply_calculated_columns, the latter would call float() on a
+    formula string and crash or return 0. This test catches that wiring inversion.
+    """
+    import auto_excel.config as cfg
+    import auto_excel.state as st
+
+    state_file = tmp_dirs["log"] / "processed.json"
+    for attr, val in [("RAW_DIR", tmp_dirs["raw"]), ("NEW_DIR", tmp_dirs["new"]),
+                      ("LOG_DIR", tmp_dirs["log"]), ("STATE_FILE", state_file)]:
+        monkeypatch.setattr(cfg, attr, val)
+    monkeypatch.setattr(st, "STATE_FILE", state_file)
+
+    wb = make_formula_workbook(
+        rows=[
+            {"笔记标题": "Normal", "笔记ID": "id1"},
+            {"笔记标题": "Empty Key Row", "笔记ID": ""},  # formulas present, key empty
+        ],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 500.0, "展现量": 5000, "点击量": 200, "留资人数": 5},
+        ],
+    )
+    src = tmp_dirs["raw"] / "order_probe.xlsx"
+    wb.save(src)
+
+    result = runner.invoke(app, ["on"])
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+    wb_out = load_workbook(tmp_dirs["new"] / "order_probe.xlsx")
+    ws = wb_out.worksheets[3]
+    headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+    huafei_col = headers.index("花费") + 1
+
+    # Every data row's 花费 column must be numeric — any formula string remaining would prove
+    # resolve_formulas did not run before apply_calculated_columns.
+    for r in range(2, ws.max_row + 1):
+        val = ws.cell(r, huafei_col).value
+        assert isinstance(val, (int, float)), \
+            f"Row {r} 花费={val!r} — formula not resolved, pipeline order inversion"
+
+
 def test_full_pipeline_with_formulas_and_empty_rows(tmp_dirs, monkeypatch, make_formula_workbook):
     """Formula workbook with empty rows: pipeline filters empties and computes groups correctly."""
     import auto_excel.config as cfg
