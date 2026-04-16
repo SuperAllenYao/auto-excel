@@ -68,6 +68,52 @@ def test_resolve_sumifs_multiple_source_rows(make_formula_workbook):
     assert ws.cell(2, 6).value == 1
 
 
+def test_resolve_sumifs_source_sheet_missing_fills_all_cols(make_formula_workbook):
+    """Source sheet absent → ALL SUMIFS columns filled with 0, not just one column."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "X", "笔记ID": "id1"}],
+        source_rows=[{"笔记ID": "id1", "消费": 99, "展现量": 99, "点击量": 99, "留资人数": 99}],
+    )
+    del wb["源数据"]  # force the missing-sheet branch
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+    assert ws.cell(2, 4).value == 0
+    assert ws.cell(2, 5).value == 0
+    assert ws.cell(2, 6).value == 0
+
+
+def test_resolve_sumifs_none_target_key_does_not_match_empty_source_key(make_formula_workbook):
+    """Target row with key=None must NOT aggregate source rows whose key is ''."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "No ID"}],
+        source_rows=[{"笔记ID": "", "消费": 999.0, "展现量": 0, "点击量": 0, "留资人数": 0}],
+    )
+    ws = wb.worksheets[3]
+    ws.cell(2, 2).value = None  # explicitly wipe the target key cell
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+
+
+def test_resolve_sumifs_each_col_aggregated_independently(make_formula_workbook):
+    """Each SUMIFS target column must sum its own source column, not share a total."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "T", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 10.0, "展现量": 100, "点击量": 5, "留资人数": 1},
+            {"笔记ID": "id1", "消费": 20.0, "展现量": 200, "点击量": 10, "留资人数": 2},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 30.0
+    assert ws.cell(2, 4).value == 300
+    assert ws.cell(2, 5).value == 15
+    assert ws.cell(2, 6).value == 3
+    # Guards against an impl that computes one total and broadcasts to every col.
+    assert ws.cell(2, 3).value != ws.cell(2, 4).value
+
+
 # ---------------------------------------------------------------------------
 # Smoke test: fixture creates correct structure
 # ---------------------------------------------------------------------------

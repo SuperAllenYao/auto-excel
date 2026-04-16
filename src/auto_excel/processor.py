@@ -230,7 +230,10 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
 
     for src_row in range(2, ws_src.max_row + 1):
         key_val = ws_src.cell(src_row, src_key_col_idx).value
-        if key_val is None:
+        # Treat missing keys (None or empty string) as unmatchable — otherwise a
+        # target row with key=None would silently collide with a source row whose
+        # key is "".
+        if key_val is None or key_val == "":
             continue
         key_str = str(key_val)
         for tgt_col, (_sn, sum_col_idx, _skc, _tkc) in sumifs_cols.items():
@@ -243,9 +246,13 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
     # --- Phase 4: Fill target rows ---
     for row in range(2, ws.max_row + 1):
         key_val = ws.cell(row, tgt_key_col_idx).value
-        key_str = str(key_val) if key_val is not None else ""
+        if key_val is None or key_val == "":
+            # No key → no aggregation possible; fill 0 for every SUMIFS column.
+            for tgt_col in sumifs_cols:
+                ws.cell(row, tgt_col).value = 0
+            continue
 
-        row_sums = aggregated.get(key_str, {})
+        row_sums = aggregated.get(str(key_val), {})
         for tgt_col in sumifs_cols:
             ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
 
