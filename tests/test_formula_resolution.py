@@ -683,9 +683,9 @@ def test_real_file_simulation(tmp_path):
     dst_path = tmp_path / "real_sim_out.xlsx"
     process_file(src_path, dst_path)
 
-    # Load output
+    # Load output (locate target sheet by name, not index — robust to pipeline reordering)
     wb_out = load_workbook(dst_path)
-    ws_out = wb_out.worksheets[3]
+    ws_out = wb_out["笔记id"]
 
     # --- Assertion 1: row count — 2 empty rows filtered, 4 data rows remain ---
     expected_data_count = 4
@@ -740,8 +740,10 @@ def test_real_file_simulation(tmp_path):
     assert abs(id_to_huafei.get("id3", -1) - 100) < 1e-6, (
         f"id3 花费 expected 100, got {id_to_huafei.get('id3')}"
     )
-    assert id_to_huafei.get("id_missing") == 0, (
-        f"id_missing 花費 expected 0, got {id_to_huafei.get('id_missing')}"
+    assert "id_missing" in id_to_huafei, \
+        "id_missing row was filtered out of the output; expected it to survive remove_empty_rows"
+    assert id_to_huafei["id_missing"] == 0, (
+        f"id_missing 花費 expected 0, got {id_to_huafei['id_missing']}"
     )
 
     # --- Assertion 5: 实际成本 column sorted descending ---
@@ -762,8 +764,11 @@ def test_real_file_simulation(tmp_path):
     ]
     total_pct = 0
     for zb in zb_values:
-        # Format is "N/P%" — extract P
-        pct_str = str(zb).split("/")[1].rstrip("%")
+        # Format is "N/P%" — parse defensively so unexpected formats produce an
+        # AssertionError with the actual value, not an unrelated ValueError.
+        assert isinstance(zb, str) and "/" in zb and zb.endswith("%"), \
+            f"Unexpected 占比 format: {zb!r} — expected 'N/P%'"
+        pct_str = zb.split("/", 1)[1].rstrip("%")
         total_pct += int(pct_str)
     assert abs(total_pct - 100) <= 2, (
         f"占比 percentages sum to {total_pct}%, expected ~100%"
