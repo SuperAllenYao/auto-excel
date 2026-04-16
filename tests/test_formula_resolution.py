@@ -552,3 +552,171 @@ def test_resolve_empty_rows_have_no_formula():
     resolve_formulas(wb, ws)
     assert ws.cell(2, 3).value == 50.0
     assert ws.cell(3, 3).value is None
+
+
+# ---------------------------------------------------------------------------
+# Task 7: Real-file simulation test
+# ---------------------------------------------------------------------------
+
+
+def test_real_file_simulation(tmp_path):
+    """Simulate 12-sheet file structure with formulas, empty rows, chained divisions.
+
+    Mirrors the real 0415.xlsx layout: 12 sheets, Sheet 4 (index 3) is '笔记id'
+    with SUMIFS formulas, Sheet 5 (index 4) is '源数据'.  Empty rows are
+    scattered between data rows.  Pipeline is run via process_file() directly.
+    """
+    from openpyxl import Workbook, load_workbook
+    from auto_excel.processor import process_file
+
+    wb = Workbook()
+    # Build 12 sheets: 0=概览(default), 1=Sheet2, 2=Sheet3, 3=笔记id (target),
+    # 4=源数据 (source), then 5-11=Sheet6..Sheet12 (filler)
+    wb.active.title = "概览"
+    wb.create_sheet("Sheet2")
+    wb.create_sheet("Sheet3")
+    ws = wb.create_sheet("笔记id")   # index 3
+    src = wb.create_sheet("源数据")  # index 4
+    for i in range(5, 12):
+        wb.create_sheet(f"Sheet{i + 1}")
+
+    # Headers for Sheet 4 (笔记id)
+    headers = ["笔记标题", "笔记ID", "花费", "展现量", "点击量", "留资人数", "留资成本", "互动成本"]
+    for i, h in enumerate(headers, 1):
+        ws.cell(1, i).value = h
+
+    # Data rows mixed with empty rows (4 real rows + 2 empty)
+    # Layout: id1, id2, empty, id3, empty, id_missing
+    data_rows = [
+        ("高成本note", "id1"),
+        ("中成本note", "id2"),
+        (None, None),                 # empty row 1
+        ("低成本note", "id3"),
+        (None, None),                 # empty row 2
+        ("无源数据note", "id_missing"),
+    ]
+    for r_off, (title, note_id) in enumerate(data_rows, start=2):
+        ws.cell(r_off, 1).value = title
+        ws.cell(r_off, 2).value = note_id
+        if title is not None:
+            # Only non-empty rows get formulas
+            ws.cell(r_off, 3).value = f"=SUMIFS('源数据'!C:C,'源数据'!A:A,B{r_off})"
+            ws.cell(r_off, 4).value = f"=SUMIFS('源数据'!D:D,'源数据'!A:A,B{r_off})"
+            ws.cell(r_off, 5).value = f"=SUMIFS('源数据'!E:E,'源数据'!A:A,B{r_off})"
+            ws.cell(r_off, 6).value = f"=SUMIFS('源数据'!F:F,'源数据'!A:A,B{r_off})"
+            ws.cell(r_off, 7).value = f"=C{r_off}/F{r_off}"
+            ws.cell(r_off, 8).value = f"=C{r_off}/E{r_off}"
+
+    # Source sheet headers
+    src_headers = ["笔记ID", "日期", "消费", "展现量", "点击量", "留资人数"]
+    for i, h in enumerate(src_headers, 1):
+        src.cell(1, i).value = h
+
+    # Source data: id1 has 3 rows (sum=1000/10000/380/5),
+    # id2 has 1 row (150/1500/50/1), id3 has 2 rows (sum=100/1000/30/5)
+    # id_missing has no source match; otherID is noise with no target row
+    src_data = [
+        ("id1", "2026-01-01", 500, 5000, 200, 2),
+        ("id1", "2026-01-02", 300, 3000, 100, 1),
+        ("id1", "2026-01-03", 200, 2000, 80,  2),   # id1 totals: 1000/10000/380/5
+        ("id2", "2026-01-01", 150, 1500, 50,  1),
+        ("id3", "2026-01-01", 80,  800,  20,  3),
+        ("id3", "2026-01-02", 20,  200,  10,  2),   # id3 totals: 100/1000/30/5
+        ("otherID", "2026-01-01", 9999, 9999, 999, 9),  # no match in target
+    ]
+    for r_off, row_data in enumerate(src_data, start=2):
+        for c_off, val in enumerate(row_data, start=1):
+            src.cell(r_off, c_off).value = val
+
+    # Save and process
+    src_path = tmp_path / "real_sim.xlsx"
+    wb.save(src_path)
+
+    dst_path = tmp_path / "real_sim_out.xlsx"
+    process_file(src_path, dst_path)
+
+    # Load output
+    wb_out = load_workbook(dst_path)
+    ws_out = wb_out.worksheets[3]
+
+    # --- Assertion 1: row count — 2 empty rows filtered, 4 data rows remain ---
+    expected_data_count = 4
+    assert ws_out.max_row == expected_data_count + 1, (
+        f"Expected {expected_data_count} data rows + 1 header, got max_row={ws_out.max_row}"
+    )
+
+    # --- Assertion 2: no formula strings remain in any cell ---
+    for row in range(2, ws_out.max_row + 1):
+        for col in range(1, ws_out.max_column + 1):
+            val = ws_out.cell(row, col).value
+            assert not (isinstance(val, str) and val.startswith("=")), (
+                f"Residual formula at row {row} col {col}: {val!r}"
+            )
+
+    # --- Assertion 3: required output headers exist ---
+    out_headers = [ws_out.cell(1, c).value for c in range(1, ws_out.max_column + 1)]
+    assert "占比" in out_headers, f"Missing '占比' column; headers={out_headers}"
+    assert "实际成本" in out_headers, f"Missing '实际成本' column; headers={out_headers}"
+    assert "花费" in out_headers, f"Missing '花费' column; headers={out_headers}"
+
+    # --- Assertion 4: 花费 column values are numeric and match expected SUMIFS sums ---
+    # Expected: id1=1000, id2=150, id3=100, id_missing=0
+    # After sort by 实际成本 desc, order by 实际花费/留资人数:
+    #   id1: 实际花费=1000/1.136≈880.3, 留资人数=5, 实际成本≈176.1  (highest)
+    #   id2: 实际花费=150/1.136≈132.0, 留资人数=1, 实际成本≈132.0
+    #   id3: 实际花费=100/1.136≈88.0,  留资人数=5, 实际成本≈17.6
+    #   id_missing: 花费=0, 实际花费=0, 留资人数=0 → 实际成本=0  (lowest)
+    huafei_col = out_headers.index("花费") + 1
+    huafei_values = {
+        ws_out.cell(r, 2).value: ws_out.cell(r, huafei_col).value
+        for r in range(2, ws_out.max_row + 1)
+    }
+    # All 花费 values must be numeric
+    for note_id, val in huafei_values.items():
+        assert isinstance(val, (int, float)), (
+            f"花費 for {note_id!r} is not numeric: {val!r}"
+        )
+
+    # Verify SUMIFS sums by finding each note by its 笔记ID in col B after sort
+    id_to_huafei: dict = {}
+    for r in range(2, ws_out.max_row + 1):
+        note_id = ws_out.cell(r, 2).value
+        id_to_huafei[note_id] = ws_out.cell(r, huafei_col).value
+
+    assert abs(id_to_huafei.get("id1", -1) - 1000) < 1e-6, (
+        f"id1 花费 expected 1000, got {id_to_huafei.get('id1')}"
+    )
+    assert abs(id_to_huafei.get("id2", -1) - 150) < 1e-6, (
+        f"id2 花费 expected 150, got {id_to_huafei.get('id2')}"
+    )
+    assert abs(id_to_huafei.get("id3", -1) - 100) < 1e-6, (
+        f"id3 花费 expected 100, got {id_to_huafei.get('id3')}"
+    )
+    assert id_to_huafei.get("id_missing") == 0, (
+        f"id_missing 花費 expected 0, got {id_to_huafei.get('id_missing')}"
+    )
+
+    # --- Assertion 5: 实际成本 column sorted descending ---
+    cost_col = out_headers.index("实际成本") + 1
+    costs = [
+        ws_out.cell(r, cost_col).value
+        for r in range(2, ws_out.max_row + 1)
+        if ws_out.cell(r, cost_col).value is not None
+    ]
+    assert costs == sorted(costs, reverse=True), f"实际成本 not sorted descending: {costs}"
+
+    # --- Assertion 6: 占比 column percentages sum to ~100% ---
+    zb_col = out_headers.index("占比") + 1
+    zb_values = [
+        ws_out.cell(r, zb_col).value
+        for r in range(2, ws_out.max_row + 1)
+        if ws_out.cell(r, zb_col).value is not None
+    ]
+    total_pct = 0
+    for zb in zb_values:
+        # Format is "N/P%" — extract P
+        pct_str = str(zb).split("/")[1].rstrip("%")
+        total_pct += int(pct_str)
+    assert abs(total_pct - 100) <= 2, (
+        f"占比 percentages sum to {total_pct}%, expected ~100%"
+    )
