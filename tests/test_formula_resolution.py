@@ -1,6 +1,5 @@
 """Tests for the formula workbook fixture and formula resolution infrastructure."""
 
-from openpyxl import Workbook
 from conftest import FORMULA_SHEET4_HEADERS, SOURCE_SHEET_HEADERS
 from auto_excel.processor import resolve_formulas
 
@@ -50,6 +49,36 @@ def test_resolve_sumifs_no_formulas(make_sample_workbook):
     ws = wb.worksheets[3]
     resolve_formulas(wb, ws)
     assert ws.cell(2, 3).value == 100.0  # Value unchanged
+
+
+def test_resolve_division_only_without_sumifs():
+    """Division formulas must still be resolved even when no SUMIFS formulas exist."""
+    from openpyxl import Workbook as _Workbook
+    wb = _Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "A"
+    ws.cell(1, 2).value = "B"
+    ws.cell(1, 3).value = "R"
+    ws.cell(2, 1).value = 10
+    ws.cell(2, 2).value = 2
+    ws.cell(2, 3).value = "=A2/B2"
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 5.0
+
+
+def test_resolve_residual_only_without_sumifs():
+    """Residual formula strings must be cleaned even when no SUMIFS formulas exist."""
+    from openpyxl import Workbook as _Workbook
+    wb = _Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "X"
+    ws.cell(2, 1).value = "=IFERROR(1/0,0)"  # neither SUMIFS nor DIV pattern
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 1).value == 0
 
 
 def test_resolve_sumifs_multiple_source_rows(make_formula_workbook):

@@ -186,14 +186,15 @@ DIV_RE = re.compile(r"=([A-Z]+)\d+/([A-Z]+)\d+")
 
 
 def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
-    """Resolve SUMIFS formula strings in ws row 2 by aggregating values from the source sheet.
+    """Resolve SUMIFS and division formula strings in ws into numeric values.
 
-    Scans row 2 for SUMIFS formula strings, reads the referenced source sheet,
-    aggregates values grouped by the key column, then fills each data row with
-    the computed sums.  Rows with no matching key default to 0.
+    Three passes over row 2:
+      1. SUMIFS — aggregate source sheet values by key column
+      2. Division — compute =X/Y using values already written by pass 1
+      3. Residual sweep — any remaining formula strings replaced with 0
 
-    If no SUMIFS formulas are found (e.g. a plain-value sheet), the function
-    returns immediately without modifying anything.
+    Passes 2 and 3 run even when no SUMIFS formulas are present, so division
+    formulas and stray formula strings are still cleaned up on plain sheets.
     """
     # --- Phase 1: Scan row 2 to find SUMIFS formula columns ---
     # sumifs_cols maps: target_col_idx -> (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
@@ -210,55 +211,52 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
             tgt_key_col_idx = column_index_from_string(m.group(4))
             sumifs_cols[col] = (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
 
-    if not sumifs_cols:
-        return
+    if sumifs_cols:
+        # All SUMIFS formulas share the same source sheet and key layout; take the first
+        source_meta = next(iter(sumifs_cols.values()))
+        sheet_name = source_meta[0]
+        src_key_col_idx = source_meta[2]
+        tgt_key_col_idx = source_meta[3]
 
-    # All SUMIFS formulas share the same source sheet and key layout; take the first
-    source_meta = next(iter(sumifs_cols.values()))
-    sheet_name = source_meta[0]
-    src_key_col_idx = source_meta[2]
-    tgt_key_col_idx = source_meta[3]
+        # --- Phase 2: Load source sheet ---
+        if sheet_name not in wb.sheetnames:
+            logging.warning("resolve_formulas: source sheet '%s' not found; filling 0", sheet_name)
+            for row in range(2, ws.max_row + 1):
+                for col in sumifs_cols:
+                    ws.cell(row, col).value = 0
+        else:
+            ws_src = wb[sheet_name]
 
-    # --- Phase 2: Load source sheet ---
-    if sheet_name not in wb.sheetnames:
-        logging.warning("resolve_formulas: source sheet '%s' not found; filling 0", sheet_name)
-        for row in range(2, ws.max_row + 1):
-            for col in sumifs_cols:
-                ws.cell(row, col).value = 0
-        return
+            # --- Phase 3: Build aggregation dict: key -> {target_col -> sum} ---
+            aggregated: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
 
-    ws_src = wb[sheet_name]
+            for src_row in range(2, ws_src.max_row + 1):
+                key_val = ws_src.cell(src_row, src_key_col_idx).value
+                # Treat missing keys (None or empty string) as unmatchable — otherwise a
+                # target row with key=None would silently collide with a source row whose
+                # key is "".
+                if key_val is None or key_val == "":
+                    continue
+                key_str = str(key_val)
+                for tgt_col, (_sn, sum_col_idx, _skc, _tkc) in sumifs_cols.items():
+                    raw = ws_src.cell(src_row, sum_col_idx).value
+                    try:
+                        aggregated[key_str][tgt_col] += float(raw or 0)
+                    except (TypeError, ValueError):
+                        pass  # non-numeric source value — skip
 
-    # --- Phase 3: Build aggregation dict: key -> {target_col -> sum} ---
-    aggregated: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+            # --- Phase 4: Fill target rows ---
+            for row in range(2, ws.max_row + 1):
+                key_val = ws.cell(row, tgt_key_col_idx).value
+                if key_val is None or key_val == "":
+                    # No key → no aggregation possible; fill 0 for every SUMIFS column.
+                    for tgt_col in sumifs_cols:
+                        ws.cell(row, tgt_col).value = 0
+                    continue
 
-    for src_row in range(2, ws_src.max_row + 1):
-        key_val = ws_src.cell(src_row, src_key_col_idx).value
-        # Treat missing keys (None or empty string) as unmatchable — otherwise a
-        # target row with key=None would silently collide with a source row whose
-        # key is "".
-        if key_val is None or key_val == "":
-            continue
-        key_str = str(key_val)
-        for tgt_col, (_sn, sum_col_idx, _skc, _tkc) in sumifs_cols.items():
-            raw = ws_src.cell(src_row, sum_col_idx).value
-            try:
-                aggregated[key_str][tgt_col] += float(raw or 0)
-            except (TypeError, ValueError):
-                pass  # non-numeric source value — skip
-
-    # --- Phase 4: Fill target rows ---
-    for row in range(2, ws.max_row + 1):
-        key_val = ws.cell(row, tgt_key_col_idx).value
-        if key_val is None or key_val == "":
-            # No key → no aggregation possible; fill 0 for every SUMIFS column.
-            for tgt_col in sumifs_cols:
-                ws.cell(row, tgt_col).value = 0
-            continue
-
-        row_sums = aggregated.get(str(key_val), {})
-        for tgt_col in sumifs_cols:
-            ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
+                row_sums = aggregated.get(str(key_val), {})
+                for tgt_col in sumifs_cols:
+                    ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
 
     # --- Phase 5: Division formulas ---
     # Scan row 2 to find division formula columns; map target_col_idx → (num_col_idx, den_col_idx)
