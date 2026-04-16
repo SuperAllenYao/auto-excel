@@ -79,3 +79,47 @@ def test_adversarial_header_never_deleted():
     ws.append(["A", "id1"])
     remove_empty_rows(ws)
     assert ws.max_row == 2  # row 1 kept
+
+
+def test_adversarial_empty_string_not_treated_as_none():
+    """Empty string '' is not None — row must NOT be deleted."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["标题", "ID"])
+    ws.append(["", ""])          # row 2: both cells empty string, not None
+    ws.append([None, None])      # row 3: real None — should be deleted
+    remove_empty_rows(ws)
+    assert ws.max_row == 2
+    assert ws.cell(2, 1).value == ""
+    assert ws.cell(2, 2).value == ""
+
+
+def test_adversarial_col3_data_with_col1_col2_none_is_deleted():
+    """Only col1+col2 determine emptiness; col3+ data is irrelevant per spec."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["标题", "ID", "数据"])
+    ws.append([None, None, 999])  # col1/col2 None → delete regardless of col3
+    ws.append(["A", "id1", 100])
+    remove_empty_rows(ws)
+    assert ws.max_row == 2
+    assert ws.cell(2, 1).value == "A"
+
+
+def test_adversarial_returns_none():
+    """Function returns None (in-place mutation contract)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["标题", "ID"])
+    ws.append([None, None])
+    result = remove_empty_rows(ws)
+    assert result is None
+
+
+def test_adversarial_header_only_sheet():
+    """Header-only sheet: no data rows — must not raise and max_row stays 1."""
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["标题", "ID"])
+    remove_empty_rows(ws)
+    assert ws.max_row == 1
