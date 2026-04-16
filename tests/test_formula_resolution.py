@@ -144,6 +144,79 @@ def test_resolve_sumifs_each_col_aggregated_independently(make_formula_workbook)
     assert ws.cell(2, 3).value != ws.cell(2, 4).value
 
 
+def test_resolve_division_multi_row_distinct_values():
+    """Each row must divide with its own numerator/denominator, not row 2's."""
+    from openpyxl import Workbook as _Workbook
+    wb = _Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "Num"
+    ws.cell(1, 2).value = "Den"
+    ws.cell(1, 3).value = "Ratio"
+    # Row 2: 10 / 2 = 5.0
+    ws.cell(2, 1).value = 10
+    ws.cell(2, 2).value = 2
+    ws.cell(2, 3).value = "=A2/B2"
+    # Row 3: 30 / 3 = 10.0 (distinct from row 2 to catch broadcast)
+    ws.cell(3, 1).value = 30
+    ws.cell(3, 2).value = 3
+    ws.cell(3, 3).value = "=A3/B3"
+    # Row 4: 7 / 2 = 3.5
+    ws.cell(4, 1).value = 7
+    ws.cell(4, 2).value = 2
+    ws.cell(4, 3).value = "=A4/B4"
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 5.0
+    assert ws.cell(3, 3).value == 10.0  # must NOT be row-2's 5.0
+    assert ws.cell(4, 3).value == 3.5
+
+
+def test_resolve_phase6_does_not_erase_phase5_results():
+    """Phase 6 residual sweep must leave Phase 5's float results intact."""
+    from openpyxl import Workbook as _Workbook
+    wb = _Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "Num"
+    ws.cell(1, 2).value = "Den"
+    ws.cell(1, 3).value = "Ratio"
+    ws.cell(1, 4).value = "Residual"
+    ws.cell(2, 1).value = 12
+    ws.cell(2, 2).value = 4
+    ws.cell(2, 3).value = "=A2/B2"          # Phase 5 → 3.0
+    ws.cell(2, 4).value = "=IFERROR(A2,0)"  # Phase 6 cleans this
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 3.0  # Phase 5 result must survive
+    assert ws.cell(2, 4).value == 0
+
+
+def test_resolve_sumifs_then_division_multi_row_distinct(make_formula_workbook):
+    """Multi-row SUMIFS→Division chain: each row's division must use its own sums."""
+    wb = make_formula_workbook(
+        rows=[
+            {"笔记标题": "A", "笔记ID": "id1"},
+            {"笔记标题": "B", "笔记ID": "id2"},
+        ],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 60.0, "展现量": 300, "点击量": 6, "留资人数": 3},
+            {"笔记ID": "id2", "消费": 20.0, "展现量": 100, "点击量": 4, "留资人数": 2},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    # Row 2 (id1): 留资成本 = 60/3 = 20.0; 互动成本 = 60/6 = 10.0
+    assert ws.cell(2, 7).value == 20.0
+    assert ws.cell(2, 8).value == 10.0
+    # Row 3 (id2): 留资成本 = 20/2 = 10.0; 互动成本 = 20/4 = 5.0
+    assert ws.cell(3, 7).value == 10.0
+    assert ws.cell(3, 8).value == 5.0
+    # Guard against an impl that broadcasts row 2's result to row 3.
+    assert ws.cell(3, 7).value != ws.cell(2, 7).value
+    assert ws.cell(3, 8).value != ws.cell(2, 8).value
+
+
 # ---------------------------------------------------------------------------
 # Smoke test: fixture creates correct structure
 # ---------------------------------------------------------------------------
