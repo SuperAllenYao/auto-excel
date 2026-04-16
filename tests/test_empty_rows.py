@@ -123,3 +123,36 @@ def test_adversarial_header_only_sheet():
     ws.append(["标题", "ID"])
     remove_empty_rows(ws)
     assert ws.max_row == 1
+
+
+def test_hyperlink_refs_updated_after_delete(tmp_path):
+    """Regression: hyperlink.ref must stay in sync with the cell's current coordinate
+    after delete_rows, otherwise the saved file has stale refs that inflate dimensions
+    on reload and introduce phantom empty rows."""
+    from openpyxl.worksheet.hyperlink import Hyperlink
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["标题", "ID", "链接"])
+    # Row 2: empty — will be deleted
+    ws.append([None, None, None])
+    # Row 3: data row with a hyperlink in col 3 (will shift to row 2 after delete)
+    ws.append(["Keep", "id1", "http://example.com"])
+    ws.cell(3, 3).hyperlink = Hyperlink(ref="C3", target="http://example.com")
+
+    remove_empty_rows(ws)
+    assert ws.max_row == 2
+    assert ws.cell(2, 1).value == "Keep"
+    # After delete, the hyperlink that was on row 3 is now on row 2; its ref must match.
+    assert ws.cell(2, 3).hyperlink is not None
+    assert ws.cell(2, 3).hyperlink.ref == "C2", \
+        f"hyperlink.ref not synced after delete: {ws.cell(2, 3).hyperlink.ref}"
+
+    # Round-trip save/reload: max_row must remain 2 (no phantom rows from stale refs).
+    path = tmp_path / "rt.xlsx"
+    wb.save(path)
+    from openpyxl import load_workbook
+    wb2 = load_workbook(path)
+    ws2 = wb2.active
+    assert ws2.max_row == 2, \
+        f"After save/reload max_row={ws2.max_row} — hyperlink ref bug regressed"

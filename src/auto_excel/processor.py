@@ -301,10 +301,21 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
 
 
 def remove_empty_rows(ws: Worksheet) -> None:
-    """Delete rows where column 1 and column 2 are both None. Row 1 (header) is never deleted."""
+    """Delete rows where column 1 and column 2 are both None. Row 1 (header) is never deleted.
+
+    Also fixes a pre-existing openpyxl issue where delete_rows shifts cell values
+    but leaves hyperlink.ref pointing to the old row. If left unsynced, the saved
+    file's hyperlinks reference rows that no longer exist, inflating the stored
+    dimension and producing trailing phantom empty rows on reload.
+    """
     for row in range(ws.max_row, 1, -1):
         if ws.cell(row, 1).value is None and ws.cell(row, 2).value is None:
             ws.delete_rows(row)
+
+    # Resync hyperlink refs with the cell's current coordinate.
+    for cell in (c for col in ws.iter_cols(values_only=False) for c in col):
+        if cell.hyperlink is not None and cell.hyperlink.ref != cell.coordinate:
+            cell.hyperlink.ref = cell.coordinate
 
 
 def process_file(src: Path, dst: Path, on_step=None) -> None:
