@@ -1,6 +1,70 @@
 """Tests for the formula workbook fixture and formula resolution infrastructure."""
 
 from conftest import FORMULA_SHEET4_HEADERS, SOURCE_SHEET_HEADERS
+from auto_excel.processor import resolve_formulas
+
+
+# ---------------------------------------------------------------------------
+# SUMIFS resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_sumifs_basic(make_formula_workbook):
+    """SUMIFS formulas are resolved to aggregated values from source sheet."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note A", "笔记ID": "id1"}, {"笔记标题": "Note B", "笔记ID": "id2"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 50.0,  "展现量": 300, "点击量": 10, "留资人数": 1},
+            {"笔记ID": "id1", "消费": 30.0,  "展现量": 200, "点击量": 5,  "留资人数": 2},
+            {"笔记ID": "id2", "消费": 100.0, "展现量": 800, "点击量": 40, "留资人数": 3},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+
+    # id1: 消费 sum = 80, 展现量 sum = 500, 点击量 sum = 15, 留资人数 sum = 3
+    assert ws.cell(2, 3).value == 80.0
+    assert ws.cell(2, 4).value == 500
+    assert ws.cell(2, 5).value == 15
+    assert ws.cell(2, 6).value == 3
+
+    # id2 sums
+    assert ws.cell(3, 3).value == 100.0
+    assert ws.cell(3, 4).value == 800
+
+
+def test_resolve_sumifs_missing_id(make_formula_workbook):
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Missing", "笔记ID": "id_missing"}],
+        source_rows=[{"笔记ID": "id_other", "消费": 100.0, "展现量": 500, "点击量": 20, "留资人数": 1}],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+
+
+def test_resolve_sumifs_no_formulas(make_sample_workbook):
+    wb = make_sample_workbook([{"花费": 100.0, "展现量": 1000, "点击量": 50, "留资人数": 5}])
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 100.0  # Value unchanged
+
+
+def test_resolve_sumifs_multiple_source_rows(make_formula_workbook):
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Multi", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 10.0, "展现量": 100, "点击量": 5, "留资人数": 0},
+            {"笔记ID": "id1", "消费": 20.0, "展现量": 200, "点击量": 3, "留资人数": 1},
+            {"笔记ID": "id1", "消费": 30.0, "展现量": 300, "点击量": 7, "留资人数": 0},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 60.0
+    assert ws.cell(2, 4).value == 600
+    assert ws.cell(2, 5).value == 15
+    assert ws.cell(2, 6).value == 1
 
 
 # ---------------------------------------------------------------------------

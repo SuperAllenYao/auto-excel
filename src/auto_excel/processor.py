@@ -1,9 +1,12 @@
 from __future__ import annotations
 import logging
+import re
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils import column_index_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -166,6 +169,83 @@ def group_and_merge(ws: Worksheet) -> None:
                 end_row=end_row, end_column=zb_col
             )
             ws.cell(start_row, zb_col).value = text
+
+
+# Matches: =SUMIFS('SheetName'!<sum_col>:<sum_col>,'SheetName'!A:A,<key_col_letter><row>)
+# Groups: (1) sheet_name, (2) sum_col_letter, (3) key_col_letter
+SUMIFS_RE = re.compile(
+    r"=SUMIFS\('([^']+)'!([A-Z]+):[A-Z]+,'[^']*'![A-Z]+:[A-Z]+,([A-Z]+)\d+\)"
+)
+
+
+def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
+    """Resolve SUMIFS formula strings in ws row 2 by aggregating values from the source sheet.
+
+    Scans row 2 for SUMIFS formula strings, reads the referenced source sheet,
+    aggregates values grouped by the key column, then fills each data row with
+    the computed sums.  Rows with no matching key default to 0.
+
+    If no SUMIFS formulas are found (e.g. a plain-value sheet), the function
+    returns immediately without modifying anything.
+    """
+    # --- Phase 1: Scan row 2 to find SUMIFS formula columns ---
+    # sumifs_cols maps: target_col_idx -> (sheet_name, sum_col_idx, key_col_idx)
+    sumifs_cols: dict[int, tuple[str, int, int]] = {}
+    for col in range(1, ws.max_column + 1):
+        cell_val = ws.cell(2, col).value
+        if not isinstance(cell_val, str):
+            continue
+        m = SUMIFS_RE.match(cell_val)
+        if m:
+            sheet_name = m.group(1)
+            sum_col_idx = column_index_from_string(m.group(2))
+            key_col_idx = column_index_from_string(m.group(3))
+            sumifs_cols[col] = (sheet_name, sum_col_idx, key_col_idx)
+
+    # No SUMIFS formulas found — nothing to do
+    if not sumifs_cols:
+        return
+
+    # All SUMIFS formulas should reference the same source sheet; use the first
+    first_entry = next(iter(sumifs_cols.values()))
+    sheet_name = first_entry[0]
+
+    # --- Phase 2: Load source sheet ---
+    if sheet_name not in wb.sheetnames:
+        logging.warning("resolve_formulas: source sheet '%s' not found; filling 0", sheet_name)
+        for row in range(2, ws.max_row + 1):
+            for col in sumifs_cols:
+                ws.cell(row, col).value = 0
+        return
+
+    ws_src = wb[sheet_name]
+
+    # --- Phase 3: Build aggregation dict: key -> {target_col -> sum} ---
+    # key is col A of source sheet (笔记ID); aggregated is keyed by that.
+    aggregated: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+
+    for src_row in range(2, ws_src.max_row + 1):
+        key_val = ws_src.cell(src_row, 1).value  # source key is always col A
+        if key_val is None:
+            continue
+        key_str = str(key_val)
+        for tgt_col, (_sn, sum_col_idx, _kci) in sumifs_cols.items():
+            raw = ws_src.cell(src_row, sum_col_idx).value
+            try:
+                aggregated[key_str][tgt_col] += float(raw or 0)
+            except (TypeError, ValueError):
+                pass  # non-numeric source value — skip
+
+    # --- Phase 4: Fill target rows ---
+    for row in range(2, ws.max_row + 1):
+        # The key column for this row is found from the first SUMIFS entry's key_col_idx
+        key_col_idx = first_entry[2]
+        key_val = ws.cell(row, key_col_idx).value
+        key_str = str(key_val) if key_val is not None else ""
+
+        row_sums = aggregated.get(key_str, {})
+        for tgt_col in sumifs_cols:
+            ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
 
 
 def process_file(src: Path, dst: Path, on_step=None) -> None:
