@@ -554,6 +554,54 @@ def test_resolve_empty_rows_have_no_formula():
     assert ws.cell(3, 3).value is None
 
 
+def test_resolve_empty_key_row_with_formula_fills_zero(make_formula_workbook):
+    """Target row with key='' but SUMIFS formula still present → row_has_formula path fills 0."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Has Formula", "笔记ID": ""}],
+        source_rows=[{"笔记ID": "id_noise", "消费": 999.0, "展现量": 999, "点击量": 99, "留资人数": 9}],
+    )
+    ws = wb.worksheets[3]
+    # Sanity: formula string exists before resolution
+    assert isinstance(ws.cell(2, 3).value, str) and ws.cell(2, 3).value.startswith("=SUMIFS")
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+    assert ws.cell(2, 4).value == 0
+    assert ws.cell(2, 5).value == 0
+    assert ws.cell(2, 6).value == 0
+
+
+def test_resolve_empty_key_row_phase4_fills_not_phase6():
+    """Phase 4 must fill 0 for empty-key rows with formulas; Phase 6 is not the fallback.
+
+    Row 3 has key=None and a SUMIFS formula. row_has_formula=True → Phase 4 should fill 0.
+    Row 2 is normal. This verifies Phase 4 directly handles the case (doesn't rely on Phase 6 sweep).
+    """
+    from openpyxl import Workbook
+    wb = Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    src = wb.create_sheet("源数据")
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "标题"
+    ws.cell(1, 2).value = "笔记ID"
+    ws.cell(1, 3).value = "花费"
+    # Row 2: normal row
+    ws.cell(2, 1).value = "Real"
+    ws.cell(2, 2).value = "id1"
+    ws.cell(2, 3).value = "=SUMIFS('源数据'!C:C,'源数据'!A:A,B2)"
+    # Row 3: key=None, but formula present → Phase 4 row_has_formula=True → fills 0
+    ws.cell(3, 1).value = "Empty key"
+    ws.cell(3, 2).value = None
+    ws.cell(3, 3).value = "=SUMIFS('源数据'!C:C,'源数据'!A:A,B3)"
+    src.cell(1, 1).value = "笔记ID"
+    src.cell(1, 3).value = "消费"
+    src.cell(2, 1).value = "id1"
+    src.cell(2, 3).value = 42.0
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 42.0
+    assert ws.cell(3, 3).value == 0
+
+
 # ---------------------------------------------------------------------------
 # Task 7: Real-file simulation test
 # ---------------------------------------------------------------------------
