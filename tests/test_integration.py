@@ -138,24 +138,20 @@ def test_full_pipeline_with_formulas(tmp_dirs, monkeypatch, make_formula_workboo
     headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
     huafei_col = headers.index("花费") + 1
 
-    # After sort by 实际成本 desc, id1 (total 花费=800, 留资人数=3, 成本≈266.7)
-    # should be first data row
+    # After sort by 实际成本 desc: id1 has highest cost (花费 800 / 留资人数 3 ≈ 266.7),
+    # id2 next (200 / 3 ≈ 66.7), id3 last (50 / 5 = 10.0). So row 2 = id1, 花费 = 800.
     first_huafei = ws.cell(2, huafei_col).value
-    assert first_huafei is not None, "花费 column value is None — formula not resolved"
-    assert isinstance(first_huafei, (int, float)), \
-        f"花费 is not numeric (got {type(first_huafei).__name__}: {first_huafei!r}) — original formula bug"
-    assert float(first_huafei) > 0, \
-        f"花费 is {first_huafei} (≤ 0) — formulas resolved to 0, not actual values"
+    assert first_huafei == 800.0, \
+        f"Row 2 (id1) 花费 should be exactly 800.0, got {first_huafei!r} — SUMIFS resolution wrong"
 
-    # All data rows should have numeric 花费 > 0
+    # All data rows must have numeric 花费 > 0 (花费 column is not part of group_and_merge,
+    # so no merged-None cells — any None here is a formula-resolution bug).
     data_rows = ws.max_row - 1  # subtract header
     assert data_rows == 3, f"Expected 3 data rows (one per ID), got {data_rows}"
     for r in range(2, ws.max_row + 1):
         val = ws.cell(r, huafei_col).value
-        if val is not None:  # merged cells may be None
-            assert isinstance(val, (int, float)), \
-                f"Row {r} 花费 not numeric: {val!r}"
-            assert float(val) > 0, f"Row {r} 花费 is {val} — expected > 0"
+        assert val is not None and isinstance(val, (int, float)) and float(val) > 0, \
+            f"Row {r} 花费 should be numeric > 0, got {val!r}"
 
     # 占比 column must exist (group_and_merge ran)
     assert "占比" in headers, "Missing 占比 column — group_and_merge did not run"
