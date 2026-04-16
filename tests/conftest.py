@@ -103,10 +103,12 @@ def make_formula_workbook():
         for col_idx, header in enumerate(SOURCE_SHEET_HEADERS, start=1):
             ws_source.cell(row=1, column=col_idx, value=header)
 
-        # Write source data rows
+        # Write source data rows. Numeric columns fall back to 0 so downstream
+        # resolve_formulas can call float() without crashing on empty strings.
         for row_idx, row_dict in enumerate(source_rows, start=2):
             for col_idx, header in enumerate(SOURCE_SHEET_HEADERS, start=1):
-                ws_source.cell(row=row_idx, column=col_idx, value=row_dict.get(header, ""))
+                default = "" if header in ("笔记ID", "日期") else 0
+                ws_source.cell(row=row_idx, column=col_idx, value=row_dict.get(header, default))
 
         return wb
 

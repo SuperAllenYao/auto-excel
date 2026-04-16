@@ -1,6 +1,5 @@
 """Tests for the formula workbook fixture and formula resolution infrastructure."""
 
-import pytest
 from conftest import FORMULA_SHEET4_HEADERS, SOURCE_SHEET_HEADERS
 
 
