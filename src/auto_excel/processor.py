@@ -290,6 +290,13 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
                 ws.cell(row, col).value = 0
 
 
+def remove_empty_rows(ws: Worksheet) -> None:
+    """Delete rows where column 1 and column 2 are both None. Row 1 (header) is never deleted."""
+    for row in range(ws.max_row, 1, -1):
+        if ws.cell(row, 1).value is None and ws.cell(row, 2).value is None:
+            ws.delete_rows(row)
+
+
 def process_file(src: Path, dst: Path, on_step=None) -> None:
     if on_step: on_step("正在复制文件...")
     shutil.copy2(src, dst)
