@@ -1,9 +1,12 @@
 from __future__ import annotations
 import logging
+import re
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils import column_index_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 
 
@@ -168,11 +171,162 @@ def group_and_merge(ws: Worksheet) -> None:
             ws.cell(start_row, zb_col).value = text
 
 
+# Matches: =SUMIFS('SheetName'!<sum_col>:<sum_col>,'SheetName'!<src_key_col>:<src_key_col>,<tgt_key_col><row>)
+# Groups: (1) sheet_name, (2) sum_col_letter, (3) src_key_col_letter, (4) tgt_key_col_letter
+# The spec fixes the source sheet layout so src_key_col is always A, but we still
+# capture it so an unexpected layout surfaces as a different sum rather than a
+# silent aggregate from the wrong column.
+SUMIFS_RE = re.compile(
+    r"=SUMIFS\('([^']+)'!([A-Z]+):[A-Z]+,'[^']+'!([A-Z]+):[A-Z]+,([A-Z]+)\d+\)"
+)
+
+# Matches simple division formulas like =C2/F2, =C3/E3
+# Groups: (1) numerator column letter, (2) denominator column letter
+DIV_RE = re.compile(r"=([A-Z]+)\d+/([A-Z]+)\d+")
+
+
+def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
+    """Resolve SUMIFS and division formula strings in ws into numeric values.
+
+    Three passes over row 2:
+      1. SUMIFS — aggregate source sheet values by key column
+      2. Division — compute =X/Y using values already written by pass 1
+      3. Residual sweep — any remaining formula strings replaced with 0
+
+    Passes 2 and 3 run even when no SUMIFS formulas are present, so division
+    formulas and stray formula strings are still cleaned up on plain sheets.
+    """
+    # --- Phase 1: Scan row 2 to find SUMIFS formula columns ---
+    # sumifs_cols maps: target_col_idx -> (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
+    sumifs_cols: dict[int, tuple[str, int, int, int]] = {}
+    for col in range(1, ws.max_column + 1):
+        cell_val = ws.cell(2, col).value
+        if not isinstance(cell_val, str):
+            continue
+        m = SUMIFS_RE.match(cell_val)
+        if m:
+            sheet_name = m.group(1)
+            sum_col_idx = column_index_from_string(m.group(2))
+            src_key_col_idx = column_index_from_string(m.group(3))
+            tgt_key_col_idx = column_index_from_string(m.group(4))
+            sumifs_cols[col] = (sheet_name, sum_col_idx, src_key_col_idx, tgt_key_col_idx)
+
+    if sumifs_cols:
+        # All SUMIFS formulas share the same source sheet and key layout; take the first
+        source_meta = next(iter(sumifs_cols.values()))
+        sheet_name = source_meta[0]
+        src_key_col_idx = source_meta[2]
+        tgt_key_col_idx = source_meta[3]
+
+        # --- Phase 2: Load source sheet ---
+        if sheet_name not in wb.sheetnames:
+            logging.warning("resolve_formulas: source sheet '%s' not found; filling 0", sheet_name)
+            for row in range(2, ws.max_row + 1):
+                for col in sumifs_cols:
+                    ws.cell(row, col).value = 0
+        else:
+            ws_src = wb[sheet_name]
+
+            # --- Phase 3: Build aggregation dict: key -> {target_col -> sum} ---
+            aggregated: dict[str, dict[int, float]] = defaultdict(lambda: defaultdict(float))
+
+            for src_row in range(2, ws_src.max_row + 1):
+                key_val = ws_src.cell(src_row, src_key_col_idx).value
+                # Treat missing keys (None or empty string) as unmatchable — otherwise a
+                # target row with key=None would silently collide with a source row whose
+                # key is "".
+                if key_val is None or key_val == "":
+                    continue
+                key_str = str(key_val)
+                for tgt_col, (_sn, sum_col_idx, _skc, _tkc) in sumifs_cols.items():
+                    raw = ws_src.cell(src_row, sum_col_idx).value
+                    try:
+                        aggregated[key_str][tgt_col] += float(raw or 0)
+                    except (TypeError, ValueError):
+                        pass  # non-numeric source value — skip
+
+            # --- Phase 4: Fill target rows ---
+            for row in range(2, ws.max_row + 1):
+                key_val = ws.cell(row, tgt_key_col_idx).value
+                if key_val is None or key_val == "":
+                    # No key → no aggregation possible.
+                    # Only fill 0 when the row actually has a SUMIFS formula string
+                    # (i.e. a real data row whose key cell is empty). Rows with no
+                    # formula at all (completely empty rows) must be left untouched so
+                    # remove_empty_rows can still identify and delete them.
+                    row_has_formula = any(
+                        isinstance(ws.cell(row, tgt_col).value, str)
+                        and ws.cell(row, tgt_col).value.startswith("=")
+                        for tgt_col in sumifs_cols
+                    )
+                    if row_has_formula:
+                        for tgt_col in sumifs_cols:
+                            ws.cell(row, tgt_col).value = 0
+                    continue
+
+                row_sums = aggregated.get(str(key_val), {})
+                for tgt_col in sumifs_cols:
+                    ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
+
+    # --- Phase 5: Division formulas ---
+    # Scan row 2 to find division formula columns; map target_col_idx → (num_col_idx, den_col_idx)
+    div_cols: dict[int, tuple[int, int]] = {}
+    for col in range(1, ws.max_column + 1):
+        cell_val = ws.cell(2, col).value
+        if not isinstance(cell_val, str):
+            continue
+        m = DIV_RE.match(cell_val)
+        if m:
+            num_col_idx = column_index_from_string(m.group(1))
+            den_col_idx = column_index_from_string(m.group(2))
+            div_cols[col] = (num_col_idx, den_col_idx)
+
+    for row in range(2, ws.max_row + 1):
+        for tgt_col, (num_col_idx, den_col_idx) in div_cols.items():
+            num_raw = ws.cell(row, num_col_idx).value
+            den_raw = ws.cell(row, den_col_idx).value
+            try:
+                result = float(num_raw) / float(den_raw)
+            except (ZeroDivisionError, TypeError, ValueError):
+                result = 0
+            ws.cell(row, tgt_col).value = result
+
+    # --- Phase 6: Residual sweep ---
+    # Replace any remaining formula strings (anything starting with '=') with 0
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            val = ws.cell(row, col).value
+            if isinstance(val, str) and val.startswith("="):
+                ws.cell(row, col).value = 0
+
+
+def remove_empty_rows(ws: Worksheet) -> None:
+    """Delete rows where column 1 and column 2 are both None. Row 1 (header) is never deleted.
+
+    Also fixes a pre-existing openpyxl issue where delete_rows shifts cell values
+    but leaves hyperlink.ref pointing to the old row. If left unsynced, the saved
+    file's hyperlinks reference rows that no longer exist, inflating the stored
+    dimension and producing trailing phantom empty rows on reload.
+    """
+    for row in range(ws.max_row, 1, -1):
+        if ws.cell(row, 1).value is None and ws.cell(row, 2).value is None:
+            ws.delete_rows(row)
+
+    # Resync hyperlink refs with the cell's current coordinate.
+    for cell in (c for col in ws.iter_cols(values_only=False) for c in col):
+        if cell.hyperlink is not None and cell.hyperlink.ref != cell.coordinate:
+            cell.hyperlink.ref = cell.coordinate
+
+
 def process_file(src: Path, dst: Path, on_step=None) -> None:
     if on_step: on_step("正在复制文件...")
     shutil.copy2(src, dst)
-    wb = load_workbook(dst, data_only=True)
+    wb = load_workbook(dst, data_only=False)  # data_only=False to preserve formula strings for resolve_formulas
     ws = wb.worksheets[3]
+    if on_step: on_step("正在解析公式...")
+    resolve_formulas(wb, ws)
+    if on_step: on_step("正在过滤空行...")
+    remove_empty_rows(ws)
     if on_step: on_step("正在计算列...")
     apply_calculated_columns(ws)
     if on_step: on_step("正在排序...")
