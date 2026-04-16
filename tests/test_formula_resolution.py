@@ -118,10 +118,13 @@ def test_fixture_source_sheet_headers_and_data(make_formula_workbook):
     for col_idx, expected_header in enumerate(SOURCE_SHEET_HEADERS, start=1):
         assert ws_src.cell(1, col_idx).value == expected_header
 
-    # Data row
+    # Data row — assert every column so swapped writes are caught.
     assert ws_src.cell(2, 1).value == "note01"
+    assert ws_src.cell(2, 2).value == "2026-03-01"
     assert ws_src.cell(2, 3).value == 250.5
     assert ws_src.cell(2, 4).value == 1000
+    assert ws_src.cell(2, 5).value == 50
+    assert ws_src.cell(2, 6).value == 5
 
 
 # Category 6: Header row of formula sheet must match FORMULA_SHEET4_HEADERS exactly.
@@ -129,5 +132,29 @@ def test_fixture_formula_sheet_headers(make_formula_workbook):
     """Formula sheet row 1 must exactly match FORMULA_SHEET4_HEADERS."""
     wb = make_formula_workbook(rows=[], source_rows=[])
     ws = wb.worksheets[3]
-    actual_headers = [ws.cell(1, col).value for col in range(1, len(FORMULA_SHEET4_HEADERS) + 1)]
-    assert actual_headers == FORMULA_SHEET4_HEADERS
+    # Read 9 cols (one past expected end) to also verify there are no extra headers.
+    actual_headers = [ws.cell(1, col).value for col in range(1, 10)]
+    assert actual_headers[:8] == FORMULA_SHEET4_HEADERS
+    assert actual_headers[8] is None  # no stray header at col 9
+
+
+# Category 7: Constant integrity — guard against the constant itself being truncated.
+def test_formula_sheet4_headers_constant_integrity():
+    """FORMULA_SHEET4_HEADERS must have exactly 8 items with known first and last."""
+    assert len(FORMULA_SHEET4_HEADERS) == 8
+    assert FORMULA_SHEET4_HEADERS[0] == "笔记标题"
+    assert FORMULA_SHEET4_HEADERS[7] == "互动成本"
+
+
+# Category 8: Numeric default behavior — missing numeric keys in source_rows default to 0.
+def test_fixture_source_numeric_default_is_zero(make_formula_workbook):
+    """Missing numeric keys in source_rows default to 0 so float() is safe downstream."""
+    wb = make_formula_workbook(
+        rows=[],
+        source_rows=[{"笔记ID": "id9", "日期": "2026-01-01"}],  # numeric cols omitted
+    )
+    ws_src = wb.worksheets[4]
+    assert ws_src.cell(2, 3).value == 0  # 消费
+    assert ws_src.cell(2, 4).value == 0  # 展现量
+    assert ws_src.cell(2, 5).value == 0  # 点击量
+    assert ws_src.cell(2, 6).value == 0  # 留资人数
