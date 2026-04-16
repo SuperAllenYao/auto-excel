@@ -1,5 +1,6 @@
 """Tests for the formula workbook fixture and formula resolution infrastructure."""
 
+from openpyxl import Workbook
 from conftest import FORMULA_SHEET4_HEADERS, SOURCE_SHEET_HEADERS
 from auto_excel.processor import resolve_formulas
 
@@ -269,3 +270,107 @@ def test_fixture_source_numeric_default_is_zero(make_formula_workbook):
     assert ws_src.cell(2, 4).value == 0  # 展现量
     assert ws_src.cell(2, 5).value == 0  # 点击量
     assert ws_src.cell(2, 6).value == 0  # 留资人数
+
+
+# ---------------------------------------------------------------------------
+# Division formula resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_division_formulas(make_formula_workbook):
+    """Col G (留资成本) = 花费 / 留资人数 is computed after SUMIFS; cell must be numeric."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note A", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 80.0, "展现量": 500, "点击量": 20, "留资人数": 4},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+
+    # Col C (花费) should be 80.0, Col F (留资人数) should be 4
+    # Col G (留资成本) = 80 / 4 = 20.0 — must be numeric, not a formula string
+    result = ws.cell(2, 7).value
+    assert isinstance(result, (int, float)), f"Expected numeric, got {type(result)}: {result!r}"
+    assert abs(result - 20.0) < 1e-9
+
+
+def test_resolve_division_by_zero(make_formula_workbook):
+    """When denominator resolves to 0, division result must be 0 (not error, not formula string)."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note A", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 80.0, "展现量": 500, "点击量": 20, "留资人数": 0},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+
+    # 留资人数 = 0 → 留资成本 (col G) = 0
+    result = ws.cell(2, 7).value
+    assert result == 0, f"Expected 0 for division by zero, got {result!r}"
+    # 点击量 = 20, so 互动成本 (col H) = 80 / 20 = 4.0
+    assert abs(ws.cell(2, 8).value - 4.0) < 1e-9
+
+
+def test_resolve_residual_formula_strings(make_formula_workbook):
+    """Any '=' formula string remaining after SUMIFS and division resolution is cleaned to 0."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note A", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 10.0, "展现量": 100, "点击量": 5, "留资人数": 1},
+        ],
+    )
+    ws = wb.worksheets[3]
+    # Plant an unhandled formula that matches neither SUMIFS_RE nor DIV_RE
+    ws.cell(2, 8).value = "=IFERROR(C2/E2,0)"  # not matched by DIV_RE
+    resolve_formulas(wb, ws)
+
+    # Residual sweep must replace any remaining '=' strings with 0
+    result = ws.cell(2, 8).value
+    assert result == 0, f"Expected 0 for residual formula, got {result!r}"
+
+
+def test_adversarial_division_depends_on_sumifs(make_formula_workbook):
+    """Chained: SUMIFS resolves 花费=80, 留资人数=3 → 留资成本=80/3 ≈ 26.67."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Chain", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 50.0, "展现量": 200, "点击量": 10, "留资人数": 2},
+            {"笔记ID": "id1", "消费": 30.0, "展现量": 100, "点击量": 5,  "留资人数": 1},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+
+    # After SUMIFS: 花费 = 80 (col C), 留资人数 = 3 (col F)
+    assert ws.cell(2, 3).value == 80.0
+    assert ws.cell(2, 6).value == 3.0
+
+    # Division must use the SUMIFS-resolved values, not formula strings
+    result = ws.cell(2, 7).value
+    assert isinstance(result, (int, float)), f"Expected numeric, got {type(result)}: {result!r}"
+    expected = 80.0 / 3.0
+    assert abs(result - expected) < 1e-9, f"Expected {expected}, got {result}"
+
+
+def test_adversarial_all_zero_source_data(make_formula_workbook):
+    """All source data zeros → all SUMIFS=0 → all divisions=0 (no errors)."""
+    wb = make_formula_workbook(
+        rows=[
+            {"笔记标题": "Row1", "笔记ID": "id1"},
+            {"笔记标题": "Row2", "笔记ID": "id2"},
+        ],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 0, "展现量": 0, "点击量": 0, "留资人数": 0},
+            {"笔记ID": "id2", "消费": 0, "展现量": 0, "点击量": 0, "留资人数": 0},
+        ],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+
+    for row in (2, 3):
+        for col in range(3, 9):  # cols C through H
+            val = ws.cell(row, col).value
+            assert val == 0, f"Expected 0 at row={row} col={col}, got {val!r}"
+            assert not isinstance(val, str), f"Got formula string at row={row} col={col}: {val!r}"

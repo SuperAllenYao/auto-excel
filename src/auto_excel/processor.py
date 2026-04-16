@@ -180,6 +180,10 @@ SUMIFS_RE = re.compile(
     r"=SUMIFS\('([^']+)'!([A-Z]+):[A-Z]+,'[^']+'!([A-Z]+):[A-Z]+,([A-Z]+)\d+\)"
 )
 
+# Matches simple division formulas like =C2/F2, =C3/E3
+# Groups: (1) numerator column letter, (2) denominator column letter
+DIV_RE = re.compile(r"=([A-Z]+)\d+/([A-Z]+)\d+")
+
 
 def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
     """Resolve SUMIFS formula strings in ws row 2 by aggregating values from the source sheet.
@@ -255,6 +259,37 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
         row_sums = aggregated.get(str(key_val), {})
         for tgt_col in sumifs_cols:
             ws.cell(row, tgt_col).value = row_sums.get(tgt_col, 0)
+
+    # --- Phase 5: Division formulas ---
+    # Scan row 2 to find division formula columns; map target_col_idx → (num_col_idx, den_col_idx)
+    div_cols: dict[int, tuple[int, int]] = {}
+    for col in range(1, ws.max_column + 1):
+        cell_val = ws.cell(2, col).value
+        if not isinstance(cell_val, str):
+            continue
+        m = DIV_RE.match(cell_val)
+        if m:
+            num_col_idx = column_index_from_string(m.group(1))
+            den_col_idx = column_index_from_string(m.group(2))
+            div_cols[col] = (num_col_idx, den_col_idx)
+
+    for row in range(2, ws.max_row + 1):
+        for tgt_col, (num_col_idx, den_col_idx) in div_cols.items():
+            num_raw = ws.cell(row, num_col_idx).value
+            den_raw = ws.cell(row, den_col_idx).value
+            try:
+                result = float(num_raw) / float(den_raw)
+            except (ZeroDivisionError, TypeError, ValueError):
+                result = 0
+            ws.cell(row, tgt_col).value = result
+
+    # --- Phase 6: Residual sweep ---
+    # Replace any remaining formula strings (anything starting with '=') with 0
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            val = ws.cell(row, col).value
+            if isinstance(val, str) and val.startswith("="):
+                ws.cell(row, col).value = 0
 
 
 def process_file(src: Path, dst: Path, on_step=None) -> None:
