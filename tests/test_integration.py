@@ -96,3 +96,146 @@ def test_full_pipeline(tmp_dirs, monkeypatch, make_sample_workbook):
     for r in range(6, 8):
         c = ws.cell(r, cost_col).value
         assert c is not None and float(c) < 50, f"Row {r} in Low group has cost {c} >= 50"
+
+
+def test_full_pipeline_with_formulas(tmp_dirs, monkeypatch, make_formula_workbook):
+    """Full pipeline with formula-based data produces correct numeric output."""
+    import auto_excel.config as cfg
+    import auto_excel.state as st
+
+    state_file = tmp_dirs["log"] / "processed.json"
+    for attr, val in [("RAW_DIR", tmp_dirs["raw"]), ("NEW_DIR", tmp_dirs["new"]),
+                      ("LOG_DIR", tmp_dirs["log"]), ("STATE_FILE", state_file)]:
+        monkeypatch.setattr(cfg, attr, val)
+    monkeypatch.setattr(st, "STATE_FILE", state_file)
+
+    wb = make_formula_workbook(
+        rows=[
+            {"笔记标题": "High Cost Note",   "笔记ID": "id1"},
+            {"笔记标题": "Medium Cost Note", "笔记ID": "id2"},
+            {"笔记标题": "Low Cost Note",    "笔记ID": "id3"},
+        ],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 500.0, "展现量": 5000, "点击量": 200, "留资人数": 2},
+            {"笔记ID": "id1", "消费": 300.0, "展现量": 3000, "点击量": 100, "留资人数": 1},
+            {"笔记ID": "id2", "消费": 200.0, "展现量": 2000, "点击量": 80,  "留资人数": 3},
+            {"笔记ID": "id3", "消费": 50.0,  "展现量": 1000, "点击量": 30,  "留资人数": 5},
+        ],
+    )
+    src = tmp_dirs["raw"] / "formula_test.xlsx"
+    wb.save(src)
+
+    result = runner.invoke(app, ["on"])
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+    out_path = tmp_dirs["new"] / "formula_test.xlsx"
+    assert out_path.exists()
+
+    wb_out = load_workbook(out_path)
+    ws = wb_out.worksheets[3]
+
+    # Verify formula columns are resolved to numbers, not formula strings or None
+    headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+    huafei_col = headers.index("花费") + 1
+
+    # After sort by 实际成本 desc, id1 (total 花费=800, 留资人数=3, 成本≈266.7)
+    # should be first data row
+    first_huafei = ws.cell(2, huafei_col).value
+    assert first_huafei is not None, "花费 column value is None — formula not resolved"
+    assert isinstance(first_huafei, (int, float)), \
+        f"花费 is not numeric (got {type(first_huafei).__name__}: {first_huafei!r}) — original formula bug"
+    assert float(first_huafei) > 0, \
+        f"花费 is {first_huafei} (≤ 0) — formulas resolved to 0, not actual values"
+
+    # All data rows should have numeric 花费 > 0
+    data_rows = ws.max_row - 1  # subtract header
+    assert data_rows == 3, f"Expected 3 data rows (one per ID), got {data_rows}"
+    for r in range(2, ws.max_row + 1):
+        val = ws.cell(r, huafei_col).value
+        if val is not None:  # merged cells may be None
+            assert isinstance(val, (int, float)), \
+                f"Row {r} 花费 not numeric: {val!r}"
+            assert float(val) > 0, f"Row {r} 花费 is {val} — expected > 0"
+
+    # 占比 column must exist (group_and_merge ran)
+    assert "占比" in headers, "Missing 占比 column — group_and_merge did not run"
+
+    # 实际成本 column must exist and be sorted descending
+    assert "实际成本" in headers, "Missing 实际成本 column"
+    cost_col = headers.index("实际成本") + 1
+    costs = [ws.cell(r, cost_col).value for r in range(2, ws.max_row + 1)
+             if ws.cell(r, cost_col).value is not None]
+    assert costs == sorted(costs, reverse=True), f"实际成本 not sorted desc: {costs}"
+
+
+def test_full_pipeline_with_formulas_and_empty_rows(tmp_dirs, monkeypatch, make_formula_workbook):
+    """Formula workbook with empty rows: pipeline filters empties and computes groups correctly."""
+    import auto_excel.config as cfg
+    import auto_excel.state as st
+
+    state_file = tmp_dirs["log"] / "processed.json"
+    for attr, val in [("RAW_DIR", tmp_dirs["raw"]), ("NEW_DIR", tmp_dirs["new"]),
+                      ("LOG_DIR", tmp_dirs["log"]), ("STATE_FILE", state_file)]:
+        monkeypatch.setattr(cfg, attr, val)
+    monkeypatch.setattr(st, "STATE_FILE", state_file)
+
+    wb = make_formula_workbook(
+        rows=[
+            {"笔记标题": "High Cost Note",   "笔记ID": "id1"},
+            {"笔记标题": "Medium Cost Note", "笔记ID": "id2"},
+            {"笔记标题": "Low Cost Note",    "笔记ID": "id3"},
+        ],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 800.0, "展现量": 8000, "点击量": 400, "留资人数": 4},
+            {"笔记ID": "id2", "消费": 200.0, "展现量": 2000, "点击量": 80,  "留资人数": 3},
+            {"笔记ID": "id3", "消费": 50.0,  "展现量": 1000, "点击量": 30,  "留资人数": 5},
+        ],
+    )
+
+    # Manually append 2 empty rows to Sheet 4 (index 3) after the data rows
+    ws_formula = wb.worksheets[3]
+    empty_row_start = ws_formula.max_row + 1
+    for empty_row in range(empty_row_start, empty_row_start + 2):
+        # Leave col A and col B as None (both required for remove_empty_rows to delete)
+        ws_formula.cell(row=empty_row, column=1).value = None
+        ws_formula.cell(row=empty_row, column=2).value = None
+
+    src = tmp_dirs["raw"] / "empty_rows_test.xlsx"
+    wb.save(src)
+
+    result = runner.invoke(app, ["on"])
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+    out_path = tmp_dirs["new"] / "empty_rows_test.xlsx"
+    assert out_path.exists()
+
+    wb_out = load_workbook(out_path)
+    ws = wb_out.worksheets[3]
+    headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+
+    # Output should have exactly 3 data rows (empty rows removed)
+    data_rows = ws.max_row - 1
+    assert data_rows == 3, \
+        f"Expected 3 data rows after empty row removal, got {data_rows} — empty rows not filtered"
+
+    # 花費 must be numeric for all data rows (formulas resolved)
+    huafei_col = headers.index("花费") + 1
+    for r in range(2, ws.max_row + 1):
+        val = ws.cell(r, huafei_col).value
+        if val is not None:
+            assert isinstance(val, (int, float)), \
+                f"Row {r} 花費 not numeric after empty row removal: {val!r}"
+
+    # 占比 percentages must total to ~100% (groups based on 3 data rows, not 5)
+    assert "占比" in headers, "Missing 占比 column"
+    zb_col = headers.index("占比") + 1
+    zb_values = [ws.cell(r, zb_col).value for r in range(2, ws.max_row + 1)
+                 if ws.cell(r, zb_col).value is not None]
+    # Each 占比 is like "1/33%" or "2/67%"; extract percentages and verify sum ~100%
+    total_pct = 0
+    for zb in zb_values:
+        # Format is "N/P%" — extract P
+        pct_str = zb.split("/")[1].rstrip("%")
+        total_pct += int(pct_str)
+    assert abs(total_pct - 100) <= 2, \
+        f"占比 percentages sum to {total_pct}%, expected ~100% for 3 data rows (not 5)"

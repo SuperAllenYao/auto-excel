@@ -300,8 +300,12 @@ def remove_empty_rows(ws: Worksheet) -> None:
 def process_file(src: Path, dst: Path, on_step=None) -> None:
     if on_step: on_step("正在复制文件...")
     shutil.copy2(src, dst)
-    wb = load_workbook(dst, data_only=True)
+    wb = load_workbook(dst, data_only=False)  # data_only=False to preserve formula strings for resolve_formulas
     ws = wb.worksheets[3]
+    if on_step: on_step("正在解析公式...")
+    resolve_formulas(wb, ws)
+    if on_step: on_step("正在过滤空行...")
+    remove_empty_rows(ws)
     if on_step: on_step("正在计算列...")
     apply_calculated_columns(ws)
     if on_step: on_step("正在排序...")
