@@ -249,9 +249,19 @@ def resolve_formulas(wb: Workbook, ws: Worksheet) -> None:
             for row in range(2, ws.max_row + 1):
                 key_val = ws.cell(row, tgt_key_col_idx).value
                 if key_val is None or key_val == "":
-                    # No key → no aggregation possible; fill 0 for every SUMIFS column.
-                    for tgt_col in sumifs_cols:
-                        ws.cell(row, tgt_col).value = 0
+                    # No key → no aggregation possible.
+                    # Only fill 0 when the row actually has a SUMIFS formula string
+                    # (i.e. a real data row whose key cell is empty). Rows with no
+                    # formula at all (completely empty rows) must be left untouched so
+                    # remove_empty_rows can still identify and delete them.
+                    row_has_formula = any(
+                        isinstance(ws.cell(row, tgt_col).value, str)
+                        and ws.cell(row, tgt_col).value.startswith("=")
+                        for tgt_col in sumifs_cols
+                    )
+                    if row_has_formula:
+                        for tgt_col in sumifs_cols:
+                            ws.cell(row, tgt_col).value = 0
                     continue
 
                 row_sums = aggregated.get(str(key_val), {})

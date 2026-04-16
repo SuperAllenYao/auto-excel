@@ -476,3 +476,79 @@ def test_adversarial_all_zero_source_data(make_formula_workbook):
             val = ws.cell(row, col).value
             assert val == 0, f"Expected 0 at row={row} col={col}, got {val!r}"
             assert not isinstance(val, str), f"Got formula string at row={row} col={col}: {val!r}"
+
+
+# ---------------------------------------------------------------------------
+# Edge case tests (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_missing_source_sheet():
+    """If the source sheet referenced by SUMIFS doesn't exist, fill 0 and don't crash."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "标题"
+    ws.cell(1, 2).value = "ID"
+    ws.cell(1, 3).value = "花费"
+    ws.cell(2, 1).value = "Note"
+    ws.cell(2, 2).value = "id1"
+    ws.cell(2, 3).value = "=SUMIFS('不存在Sheet'!C:C,'不存在Sheet'!A:A,B2)"
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+
+
+def test_resolve_empty_source_sheet(make_formula_workbook):
+    """Source sheet exists but has no data rows → all SUMIFS target cells = 0."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note", "笔记ID": "id1"}],
+        source_rows=[],
+    )
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 0
+
+
+def test_resolve_source_with_none_ids(make_formula_workbook):
+    """Source rows with None IDs are skipped; only rows with valid IDs are aggregated."""
+    wb = make_formula_workbook(
+        rows=[{"笔记标题": "Note", "笔记ID": "id1"}],
+        source_rows=[
+            {"笔记ID": "id1", "消费": 100.0, "展现量": 500, "点击量": 20, "留资人数": 1},
+            {"笔记ID": None,  "消费": 999.0, "展现量": 999, "点击量": 99, "留资人数": 9},
+        ],
+    )
+    # Overwrite the None row's key cell explicitly (fixture may default to "")
+    ws_src = wb.worksheets[4]
+    ws_src.cell(3, 1).value = None
+    ws = wb.worksheets[3]
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 100.0  # Only id1 data, not None row
+
+
+def test_resolve_empty_rows_have_no_formula():
+    """Row with all-None cells has no formula; resolve_formulas must leave it unchanged."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    for _ in range(3):
+        wb.create_sheet()
+    ws = wb.worksheets[3]
+    ws.cell(1, 1).value = "标题"
+    ws.cell(1, 2).value = "ID"
+    ws.cell(1, 3).value = "花费"
+    ws.cell(2, 1).value = "Note"
+    ws.cell(2, 2).value = "id1"
+    ws.cell(2, 3).value = "=SUMIFS('源'!C:C,'源'!A:A,B2)"
+    ws.cell(3, 1).value = None
+    ws.cell(3, 2).value = None
+    ws.cell(3, 3).value = None
+    src = wb.create_sheet("源")
+    src.cell(1, 1).value = "笔记ID"
+    src.cell(1, 3).value = "消费"
+    src.cell(2, 1).value = "id1"
+    src.cell(2, 3).value = 50.0
+    resolve_formulas(wb, ws)
+    assert ws.cell(2, 3).value == 50.0
+    assert ws.cell(3, 3).value is None
